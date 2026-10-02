@@ -16,6 +16,8 @@ from src.config import (
     DEFAULT_CRF,
     DEFAULT_JPG_QUALITY,
     OUTPUT_DIR,
+    PHOTO_OUTPUT_DIR,
+    VIDEO_OUTPUT_DIR,
     IMAGE_EXTENSIONS,
     VIDEO_EXTENSIONS,
 )
@@ -206,11 +208,12 @@ def main():
         else:
             selected_model = args.model
 
+        dest_for_item = (PHOTO_OUTPUT_DIR if is_img else VIDEO_OUTPUT_DIR) if output_dest == OUTPUT_DIR else output_dest
         try:
             if is_img:
                 process_image(
                     input_path=item,
-                    output_dest=output_dest,
+                    output_dest=dest_for_item,
                     scale=args.scale,
                     model_name=selected_model,
                     face=args.face,
@@ -225,7 +228,7 @@ def main():
             else:
                 process_video(
                     video_path=item,
-                    output_dest=output_dest,
+                    output_dest=dest_for_item,
                     scale=args.scale,
                     model_name=selected_model,
                     face=args.face,

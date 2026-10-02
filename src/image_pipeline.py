@@ -3,7 +3,7 @@ Pipeline for processing single or batch images with Real-ESRGAN and optional GFP
 """
 import os
 from pathlib import Path
-from typing import Optional, Tuple, Any
+from typing import Optional, Tuple, Any, Callable
 
 import cv2
 import numpy as np
@@ -158,6 +158,7 @@ def process_image(
     overwrite: bool = False,
     upsampler: Optional[RealESRGANer] = None,
     face_enhancer: Optional[GFPGANer] = None,
+    progress_callback: Optional[Callable[[int, str], None]] = None,
 ) -> Path:
     """
     Process a single image according to specification:
@@ -169,14 +170,21 @@ def process_image(
     6. Apply max_side limit.
     7. Save to output directory or file.
     """
+    if progress_callback:
+        progress_callback(5, "Menyiapkan berkas...")
+
     custom_ext = f".{output_format}" if output_format else None
     out_path = get_output_filepath(input_path, output_dest, scale, custom_ext)
 
     if out_path.exists() and not overwrite:
         logger.info(f"File output sudah ada, lewati (gunakan --overwrite untuk menimpa): {out_path.name}")
+        if progress_callback:
+            progress_callback(100, "File sudah ada, selesai.")
         return out_path
 
     logger.info(f"Memproses foto: {input_path.name} -> {out_path.name} (Scale: {scale}x, Model: {model_name})")
+    if progress_callback:
+        progress_callback(15, f"Membaca gambar ({input_path.name})...")
 
     # Read image
     img = read_image_with_exif(input_path)
@@ -195,6 +203,9 @@ def process_image(
         bgr = img
         alpha = None
 
+    if progress_callback:
+        progress_callback(25, f"Menyiapkan model AI ({model_name})...")
+
     # Load models if not provided
     if upsampler is None:
         upsampler = model_manager.get_upsampler(
@@ -204,6 +215,8 @@ def process_image(
         )
 
     if face and face_enhancer is None:
+        if progress_callback:
+            progress_callback(35, "Menyiapkan GFPGAN face enhancer...")
         face_enhancer = model_manager.get_face_enhancer(
             target_scale=scale,
             bg_upsampler=upsampler
@@ -212,6 +225,8 @@ def process_image(
     # Perform Upscaling & Face restoration
     if face:
         logger.debug(f"Menjalankan face restoration dengan GFPGAN (weight={face_weight})...")
+        if progress_callback:
+            progress_callback(45, f"Meningkatkan kualitas foto & wajah (GFPGAN)...")
         def _run_face():
             _, _, restored = face_enhancer.enhance(
                 bgr,
@@ -225,11 +240,16 @@ def process_image(
         enhanced_bgr = enhance_with_oom_recovery(_run_face, upsampler)
     else:
         logger.debug(f"Menjalankan upscaling dengan Real-ESRGAN...")
+        if progress_callback:
+            progress_callback(45, f"Meningkatkan resolusi ({scale}x) dengan Real-ESRGAN...")
         def _run_upscale():
             output, _ = upsampler.enhance(bgr, outscale=scale)
             return output
 
         enhanced_bgr = enhance_with_oom_recovery(_run_upscale, upsampler)
+
+    if progress_callback:
+        progress_callback(80, "Menyesuaikan resolusi akhir...")
 
     # Ensure target scale resolution
     target_w = int(round(orig_w * scale))
@@ -267,7 +287,12 @@ def process_image(
         )
         final_img = cv2.resize(final_img, (bounded_w, bounded_h), interpolation=cv2.INTER_AREA)
 
+    if progress_callback:
+        progress_callback(92, "Menyimpan file ke folder output...")
+
     # Save output
     write_image_safely(final_img, out_path, jpg_quality=jpg_quality)
     logger.info(f"Selesai! Hasil disimpan ke: {out_path}")
+    if progress_callback:
+        progress_callback(100, "Selesai!")
     return out_path

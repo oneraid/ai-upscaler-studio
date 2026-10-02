@@ -6,7 +6,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable
 
 import cv2
 import numpy as np
@@ -56,6 +56,7 @@ def process_video(
     overwrite: bool = False,
     upsampler: Optional[RealESRGANer] = None,
     face_enhancer: Optional[GFPGANer] = None,
+    progress_callback: Optional[Callable[[int, str], None]] = None,
 ) -> Path:
     """
     Process a video file according to specifications:
@@ -72,7 +73,12 @@ def process_video(
     out_path = get_output_filepath(video_path, output_dest, scale, custom_ext=".mp4")
     if out_path.exists() and not overwrite:
         logger.info(f"File output video sudah ada, lewati: {out_path.name}")
+        if progress_callback:
+            progress_callback(100, "File video sudah ada, selesai.")
         return out_path
+
+    if progress_callback:
+        progress_callback(2, "Menganalisis metadata video...")
 
     logger.info(f"Memulai pipeline video untuk: {video_path.name}")
     info = probe_video(video_path)
@@ -132,6 +138,8 @@ def process_video(
     existing_in = list(frames_in_dir.glob("*.png"))
     if not existing_in:
         logger.info(f"Mengekstrak frame dari video...")
+        if progress_callback:
+            progress_callback(5, "Mengekstrak frame dari video...")
         extracted_count = extract_frames(
             video_path,
             frames_in_dir,
@@ -143,8 +151,12 @@ def process_video(
         logger.info(f"Menggunakan {len(existing_in)} frame yang sudah diekstrak sebelumnya.")
 
     frame_files = sorted(frames_in_dir.glob("*.png"))
+    total_frames = len(frame_files)
     if not frame_files:
         raise RuntimeError("Tidak ada frame yang diekstrak untuk diproses!")
+
+    if progress_callback:
+        progress_callback(12, f"Mempersiapkan model AI untuk {total_frames} frame...")
 
     # Model loading
     if upsampler is None:
@@ -161,48 +173,54 @@ def process_video(
         )
 
     logger.info(f"Meningkatkan kualitas frame video (Resume: {resume})...")
+    if progress_callback:
+        progress_callback(15, f"Memulai upscaling video (0/{total_frames} frame)...")
 
     # Processing loop with resume support and graceful interrupt
     try:
         pbar = tqdm(frame_files, desc="Upscaling Video", unit="frame")
-        for in_frame_path in pbar:
+        for idx, in_frame_path in enumerate(pbar):
             out_frame_path = frames_out_dir / in_frame_path.name
             if resume and out_frame_path.exists() and out_frame_path.stat().st_size > 0:
-                continue
-
-            # Read frame
-            data = np.fromfile(str(in_frame_path.resolve()), dtype=np.uint8)
-            frame_img = cv2.imdecode(data, cv2.IMREAD_COLOR)
-            if frame_img is None:
-                logger.warning(f"Frame rusak atau tidak terbaca: {in_frame_path.name}, dilewati.")
-                continue
-
-            # Enhance frame
-            if face:
-                def _run_face():
-                    _, _, restored = face_enhancer.enhance(
-                        frame_img,
-                        has_aligned=False,
-                        only_center_face=False,
-                        paste_back=True,
-                        weight=face_weight,
-                    )
-                    return restored
-                enhanced = enhance_with_oom_recovery(_run_face, upsampler)
+                pass
             else:
-                def _run_upscale():
-                    output, _ = upsampler.enhance(frame_img, outscale=scale)
-                    return output
-                enhanced = enhance_with_oom_recovery(_run_upscale, upsampler)
+                # Read frame
+                data = np.fromfile(str(in_frame_path.resolve()), dtype=np.uint8)
+                frame_img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+                if frame_img is None:
+                    logger.warning(f"Frame rusak atau tidak terbaca: {in_frame_path.name}, dilewati.")
+                    continue
 
-            # Resize if needed
-            if (enhanced.shape[1], enhanced.shape[0]) != (target_w, target_h):
-                enhanced = cv2.resize(enhanced, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
+                # Enhance frame
+                if face:
+                    def _run_face():
+                        _, _, restored = face_enhancer.enhance(
+                            frame_img,
+                            has_aligned=False,
+                            only_center_face=False,
+                            paste_back=True,
+                            weight=face_weight,
+                        )
+                        return restored
+                    enhanced = enhance_with_oom_recovery(_run_face, upsampler)
+                else:
+                    def _run_upscale():
+                        output, _ = upsampler.enhance(frame_img, outscale=scale)
+                        return output
+                    enhanced = enhance_with_oom_recovery(_run_upscale, upsampler)
 
-            # Save enhanced frame
-            success, encoded = cv2.imencode(".png", enhanced, [cv2.IMWRITE_PNG_COMPRESSION, 3])
-            if success:
-                encoded.tofile(str(out_frame_path.resolve()))
+                # Resize if needed
+                if (enhanced.shape[1], enhanced.shape[0]) != (target_w, target_h):
+                    enhanced = cv2.resize(enhanced, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
+
+                # Save enhanced frame
+                success, encoded = cv2.imencode(".png", enhanced, [cv2.IMWRITE_PNG_COMPRESSION, 3])
+                if success:
+                    encoded.tofile(str(out_frame_path.resolve()))
+
+            if progress_callback:
+                pct = 15 + int(((idx + 1) / total_frames) * 73)
+                progress_callback(pct, f"Memproses frame {idx + 1}/{total_frames} ({pct}%)")
     except KeyboardInterrupt:
         logger.warning(
             "\n[INTERRUPT] Proses video dihentikan oleh pengguna (Ctrl+C). "
@@ -212,6 +230,9 @@ def process_video(
 
     # Encode video
     logger.info(f"Melakukan re-encode frame ke file video: {out_path.name}...")
+    if progress_callback:
+        progress_callback(90, f"Meng-encode ulang video (NVENC / H.264 & audio sync)...")
+
     encode_video_from_frames(
         frames_dir=frames_out_dir,
         output_video_path=out_path,
@@ -229,11 +250,16 @@ def process_video(
     # Cleanup temporary work directory unless keep_frames is requested
     if not keep_frames:
         logger.info(f"Membersihkan frame sementara di {video_work_dir.name}...")
+        if progress_callback:
+            progress_callback(98, "Membersihkan data kerja sementara...")
         try:
             shutil.rmtree(video_work_dir, ignore_errors=True)
         except Exception as e:
             logger.debug(f"Pembersihan work dir gagal: {e}")
     else:
         logger.info(f"Frame sementara dipertahankan di: {video_work_dir}")
+
+    if progress_callback:
+        progress_callback(100, "Selesai!")
 
     return out_path

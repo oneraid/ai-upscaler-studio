@@ -8,8 +8,15 @@ from typing import Dict, Any
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WEIGHTS_DIR = PROJECT_ROOT / "weights"
 OUTPUT_DIR = PROJECT_ROOT / "output"
+PHOTO_OUTPUT_DIR = OUTPUT_DIR / "photo"
+VIDEO_OUTPUT_DIR = OUTPUT_DIR / "video"
 INPUT_DIR = PROJECT_ROOT / "input"
 WORK_DIR = PROJECT_ROOT / ".work"
+
+# Pastikan folder output dan subfolder photo/video tersedia
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+PHOTO_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+VIDEO_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Supported file formats
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}

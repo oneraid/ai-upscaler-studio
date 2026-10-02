@@ -1,5 +1,17 @@
-import React, { useState } from 'react';
-import { Video, Sparkles, Download, RefreshCw, AlertCircle, Scissors } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Video,
+  Sparkles,
+  Download,
+  RefreshCw,
+  AlertCircle,
+  Scissors,
+  FolderOpen,
+  ExternalLink,
+  Copy,
+  Check,
+  Folder,
+} from 'lucide-react';
 
 export default function VideoStudio() {
   const [file, setFile] = useState(null);
@@ -15,26 +27,213 @@ export default function VideoStudio() {
   const [endSec, setEndSec] = useState(5);
 
   const [isProcessing, setIsProcessing] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [progressMsg, setProgressMsg] = useState('');
+  const [copied, setCopied] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+
+  const [isDragging, setIsDragging] = useState(false);
+  const pollTimerRef = useRef(null);
+
+  const isValidVideo = (f) => {
+    if (!f) return false;
+    if (f.type && f.type.startsWith('video/')) return true;
+    return /\.(mp4|mkv|mov|avi|webm|m4v|flv|wmv|ts)$/i.test(f.name || '');
+  };
+
+  const processVideoFile = (selected) => {
+    if (!selected) return;
+    if (!isValidVideo(selected)) {
+      setError('Format file tidak didukung. Harap pilih video (MP4, MKV, MOV, AVI, WEBM).');
+      return;
+    }
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+    localStorage.removeItem('upscaler_active_video_task');
+    setFile(selected);
+    setPreviewUrl(URL.createObjectURL(selected));
+    setResult(null);
+    setError(null);
+  };
 
   const handleFileChange = (e) => {
     const selected = e.target.files && e.target.files[0];
     if (selected) {
-      setFile(selected);
-      setPreviewUrl(URL.createObjectURL(selected));
-      setResult(null);
-      setError(null);
+      processVideoFile(selected);
     }
   };
 
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      processVideoFile(e.dataTransfer.files[0]);
+    }
+  };
+
+  const handleOpenFolder = async (path, filename) => {
+    try {
+      await fetch('/api/open-folder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, filename, media_type: 'video' }),
+      });
+    } catch (e) {
+      console.error('Gagal membuka folder:', e);
+    }
+  };
+
+  const handleOpenFile = async (path, filename) => {
+    try {
+      await fetch('/api/open-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, filename, media_type: 'video' }),
+      });
+    } catch (e) {
+      console.error('Gagal membuka file:', e);
+    }
+  };
+
+  const copyPath = (path) => {
+    if (!path) return;
+    navigator.clipboard.writeText(path);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  // Fungsi polling task terpusat dan aman dari unmount / reload
+  const startPolling = (taskId, initialPreviewUrl = null) => {
+    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    setIsProcessing(true);
+    localStorage.setItem('upscaler_active_video_task', taskId);
+    if (initialPreviewUrl) setPreviewUrl(initialPreviewUrl);
+
+    pollTimerRef.current = setInterval(async () => {
+      try {
+        const tRes = await fetch(`/api/task/${taskId}`);
+        if (!tRes.ok) return;
+        const tData = await tRes.json();
+        setProgress(tData.progress || 0);
+        if (tData.message) setProgressMsg(tData.message);
+        if (tData.preview_url && !previewUrl) setPreviewUrl(tData.preview_url);
+
+        if (tData.status === 'completed') {
+          if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+          pollTimerRef.current = null;
+          setResult(tData.result);
+          setIsProcessing(false);
+          setProgress(100);
+          localStorage.removeItem('upscaler_active_video_task');
+        } else if (tData.status === 'failed') {
+          if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+          pollTimerRef.current = null;
+          setError(tData.error || 'Terjadi kesalahan saat memproses video.');
+          setIsProcessing(false);
+          localStorage.removeItem('upscaler_active_video_task');
+        }
+      } catch (pollErr) {
+        console.error('Polling error:', pollErr);
+      }
+    }, 400);
+  };
+
+  // Auto-recovery: Pulihkan progress video jika halaman ter-refresh saat video sedang diproses
+  useEffect(() => {
+    const recoverTask = async () => {
+      const savedTaskId = localStorage.getItem('upscaler_active_video_task');
+      let targetTaskId = savedTaskId;
+
+      if (!targetTaskId) {
+        try {
+          const aRes = await fetch('/api/tasks/active');
+          if (aRes.ok) {
+            const aData = await aRes.json();
+            const activeVideo = (aData.tasks || []).find((t) => t.media_type === 'video');
+            if (activeVideo) {
+              targetTaskId = activeVideo.task_id;
+            }
+          }
+        } catch (e) {
+          console.debug('Gagal cek active video tasks:', e);
+        }
+      }
+
+      if (targetTaskId) {
+        try {
+          const res = await fetch(`/api/task/${targetTaskId}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.status === 'processing') {
+              setProgress(data.progress || 0);
+              setProgressMsg(data.message || 'Melanjutkan proses video AI...');
+              if (data.preview_url) setPreviewUrl(data.preview_url);
+              if (data.model) setModel(data.model);
+              if (data.scale) setScale(data.scale);
+              startPolling(targetTaskId, data.preview_url);
+            } else if (data.status === 'completed') {
+              setResult(data.result);
+              if (data.preview_url) setPreviewUrl(data.preview_url);
+              localStorage.removeItem('upscaler_active_video_task');
+            } else {
+              localStorage.removeItem('upscaler_active_video_task');
+            }
+          }
+        } catch (err) {
+          console.error('Gagal memulihkan task video:', err);
+        }
+      }
+    };
+
+    recoverTask();
+
+    return () => {
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Proteksi sebelum halaman ditutup / direfresh oleh user saat proses video aktif
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (isProcessing) {
+        e.preventDefault();
+        e.returnValue = 'Proses video AI sedang berjalan di latar belakang. Yakin ingin meninggalkan halaman?';
+        return e.returnValue;
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isProcessing]);
+
   const handleEnhance = async () => {
-    if (!file) return;
+    if (!file && !previewUrl) return;
     setIsProcessing(true);
     setError(null);
+    setProgress(0);
+    setProgressMsg('Menyiapkan unggahan video...');
 
     const formData = new FormData();
-    formData.append('video', file);
+    if (file) {
+      formData.append('video', file);
+    }
     formData.append('model', model);
     formData.append('scale', scale);
     formData.append('face', useFace);
@@ -54,13 +253,21 @@ export default function VideoStudio() {
         throw new Error(errData.detail || `Gagal memproses video (${res.status})`);
       }
 
-      const data = await res.json();
-      setResult(data);
+      const initData = await res.json();
+      const taskId = initData.task_id;
+
+      if (!taskId) {
+        setResult(initData);
+        setIsProcessing(false);
+        return;
+      }
+
+      startPolling(taskId, previewUrl);
     } catch (err) {
       console.error(err);
       setError(err.message || 'Terjadi kesalahan saat memproses video.');
-    } finally {
       setIsProcessing(false);
+      localStorage.removeItem('upscaler_active_video_task');
     }
   };
 
@@ -69,7 +276,13 @@ export default function VideoStudio() {
       {/* Left Column: Upload & Controls */}
       <div className="glass-card studio-panel">
         {!previewUrl ? (
-          <label className="dropzone">
+          <label
+            className={`dropzone ${isDragging ? 'drag-active' : ''}`}
+            onDragOver={handleDragOver}
+            onDragEnter={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
             <input
               type="file"
               accept="video/*"
@@ -81,11 +294,17 @@ export default function VideoStudio() {
               Unggah File Video
             </h3>
             <p style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>
-              Mendukung MP4, MKV, MOV, atau AVI
+              Drag & drop atau klik untuk memilih file MP4, MKV, MOV, atau AVI
             </p>
           </label>
         ) : (
-          <div className="dropzone-preview">
+          <div
+            className={`dropzone-preview ${isDragging ? 'drag-active' : ''}`}
+            onDragOver={handleDragOver}
+            onDragEnter={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
             <video src={previewUrl} controls style={{ width: '100%', maxHeight: '280px' }} />
             <label className="change-overlay">
               <input
@@ -233,7 +452,7 @@ export default function VideoStudio() {
           {isProcessing ? (
             <>
               <RefreshCw size={20} className="spinning" />
-              <span>Memproses Frame Video (NVIDIA NVENC)...</span>
+              <span>Memproses Video ({progress}%)...</span>
             </>
           ) : (
             <>
@@ -242,6 +461,26 @@ export default function VideoStudio() {
             </>
           )}
         </button>
+
+        {/* Real-time Progress Bar */}
+        {isProcessing && (
+          <div className="progress-card">
+            <div className="progress-header">
+              <div className="progress-title">
+                <RefreshCw size={15} className="spinning" />
+                <span>{progressMsg || 'Memproses video...'}</span>
+              </div>
+              <div className="progress-percent">{progress}%</div>
+            </div>
+            <div className="progress-track">
+              <div className="progress-fill" style={{ width: `${progress}%` }} />
+            </div>
+            <div className="progress-footer">
+              <span>Model: {model} ({scale}x)</span>
+              <span>{progress}% selesai</span>
+            </div>
+          </div>
+        )}
 
         {error && (
           <div style={{ padding: '12px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', fontSize: '0.85rem', display: 'flex', gap: '8px' }}>
@@ -284,14 +523,58 @@ export default function VideoStudio() {
               </div>
             </div>
 
-            {/* Download Button */}
-            <a
-              href={result.video_url}
-              download={result.filename}
-              className="btn-download"
-            >
-              <Download size={18} /> Unduh Video Hasil AI (Audio Asli)
-            </a>
+            {/* Result Actions: Path Info & Action Buttons */}
+            <div className="result-actions-wrapper">
+              {result.absolute_path && (
+                <div className="path-display-card">
+                  <div className="path-text" title={result.absolute_path}>
+                    <Folder size={15} style={{ flexShrink: 0, color: 'var(--accent-secondary)' }} />
+                    <span>{result.absolute_path}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-copy-path"
+                    onClick={() => copyPath(result.absolute_path)}
+                    title="Salin path video ke clipboard"
+                  >
+                    {copied ? <Check size={13} style={{ color: '#34d399' }} /> : <Copy size={13} />}
+                    <span>{copied ? 'Tersalin' : 'Salin Path'}</span>
+                  </button>
+                </div>
+              )}
+
+              <div className="action-buttons-row">
+                <button
+                  type="button"
+                  className="btn-action-primary"
+                  onClick={() => handleOpenFolder(result.absolute_path, result.filename)}
+                  title="Buka File Explorer dan sorot video ini"
+                >
+                  <FolderOpen size={18} />
+                  <span>Buka di Folder</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="btn-action-secondary"
+                  onClick={() => handleOpenFile(result.absolute_path, result.filename)}
+                  title="Putar video langsung di aplikasi bawaan Windows"
+                >
+                  <ExternalLink size={16} />
+                  <span>Putar Video</span>
+                </button>
+
+                <a
+                  href={result.video_url}
+                  download={result.filename}
+                  className="btn-action-download"
+                  title="Unduh video via browser"
+                >
+                  <Download size={15} />
+                  <span>Unduh Video</span>
+                </a>
+              </div>
+            </div>
           </div>
         ) : (
           <div style={{ textAlign: 'center', padding: '80px 20px', color: 'var(--text-dim)' }}>
