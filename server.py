@@ -241,6 +241,7 @@ def _video_worker(
     clip_end: Optional[float],
     orig_w: int,
     orig_h: int,
+    target_fps: int = 0,
 ):
     start_time = time.time()
     try:
@@ -260,6 +261,7 @@ def _video_worker(
             overwrite=True,
             resume=True,
             progress_callback=_prog,
+            target_fps=int(target_fps),
         )
 
         elapsed = time.time() - start_time
@@ -432,6 +434,7 @@ async def enhance_video_api(
     is_trim: bool = Form(False),
     start_sec: float = Form(0.0),
     end_sec: float = Form(5.0),
+    target_fps: int = Form(0),
 ):
     """Menerima unggahan video dan memprosesnya dengan tracking persentase frame per frame."""
     file_ext = Path(video.filename).suffix or ".mp4"
@@ -469,6 +472,7 @@ async def enhance_video_api(
             clip_end,
             orig_w,
             orig_h,
+            target_fps,
         ),
         daemon=True,
     ).start()

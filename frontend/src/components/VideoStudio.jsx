@@ -5,21 +5,44 @@ import {
   Download,
   RefreshCw,
   AlertCircle,
+  AlertTriangle,
   Scissors,
   FolderOpen,
   ExternalLink,
   Copy,
   Check,
   Folder,
+  Info,
 } from 'lucide-react';
+
+const formatDuration = (sec) => {
+  if (!sec || isNaN(sec)) return '00:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+};
+
+const getResLabel = (w, h) => {
+  if (!w || !h) return '';
+  const maxDim = Math.max(w, h);
+  if (maxDim >= 7000) return '8K UHD';
+  if (maxDim >= 3500) return '4K UHD';
+  if (maxDim >= 2400) return '2K QHD';
+  if (maxDim >= 1800) return '1080p FHD';
+  if (maxDim >= 1200) return '720p HD';
+  if (maxDim >= 800) return '480p SD';
+  return 'SD';
+};
 
 export default function VideoStudio() {
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
+  const [videoMeta, setVideoMeta] = useState(null);
 
   // Settings
   const [model, setModel] = useState('general-fast');
   const [scale, setScale] = useState(2);
+  const [targetFps, setTargetFps] = useState(0);
   const [useFace, setUseFace] = useState(false);
   const [faceWeight, setFaceWeight] = useState(0.5);
   const [isTrim, setIsTrim] = useState(false);
@@ -57,6 +80,14 @@ export default function VideoStudio() {
     setPreviewUrl(URL.createObjectURL(selected));
     setResult(null);
     setError(null);
+    setVideoMeta({
+      name: selected.name,
+      size: (selected.size / (1024 * 1024)).toFixed(1) + ' MB',
+      width: null,
+      height: null,
+      duration: null,
+      durationFormatted: '...',
+    });
   };
 
   const handleFileChange = (e) => {
@@ -236,6 +267,7 @@ export default function VideoStudio() {
     }
     formData.append('model', model);
     formData.append('scale', scale);
+    formData.append('target_fps', targetFps);
     formData.append('face', useFace);
     formData.append('face_weight', faceWeight);
     formData.append('is_trim', isTrim);
@@ -298,23 +330,103 @@ export default function VideoStudio() {
             </p>
           </label>
         ) : (
-          <div
-            className={`dropzone-preview ${isDragging ? 'drag-active' : ''}`}
-            onDragOver={handleDragOver}
-            onDragEnter={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-          >
-            <video src={previewUrl} controls style={{ width: '100%', maxHeight: '280px' }} />
-            <label className="change-overlay">
-              <input
-                type="file"
-                accept="video/*"
-                style={{ display: 'none' }}
-                onChange={handleFileChange}
+          <div>
+            <div
+              className={`dropzone-preview ${isDragging ? 'drag-active' : ''}`}
+              onDragOver={handleDragOver}
+              onDragEnter={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              <video
+                src={previewUrl}
+                controls
+                style={{ width: '100%', maxHeight: '280px' }}
+                onLoadedMetadata={(e) => {
+                  const v = e.target;
+                  if (v.videoWidth && v.videoHeight) {
+                    setVideoMeta((prev) => ({
+                      name: file ? file.name : (prev?.name || 'video_input.mp4'),
+                      size: file ? (file.size / (1024 * 1024)).toFixed(1) + ' MB' : (prev?.size || '-'),
+                      width: v.videoWidth,
+                      height: v.videoHeight,
+                      duration: v.duration,
+                      durationFormatted: formatDuration(v.duration),
+                    }));
+                  }
+                }}
               />
-              <RefreshCw size={12} /> Ganti Video
-            </label>
+              <label className="change-overlay">
+                <input
+                  type="file"
+                  accept="video/*"
+                  style={{ display: 'none' }}
+                  onChange={handleFileChange}
+                />
+                <RefreshCw size={12} /> Ganti Video
+              </label>
+            </div>
+
+            {/* Video Input Metadata Card */}
+            {videoMeta && videoMeta.width && (
+              <div className="video-meta-card">
+                <div className="video-meta-header">
+                  <div className="video-meta-name" title={videoMeta.name}>
+                    📹 {videoMeta.name}
+                  </div>
+                  <span className="video-meta-badge">
+                    {getResLabel(videoMeta.width, videoMeta.height)}
+                  </span>
+                </div>
+
+                <div className="video-meta-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+                  <div className="video-meta-item">
+                    <span className="meta-lbl">Resolusi Asli</span>
+                    <span className="meta-val">{videoMeta.width} × {videoMeta.height}</span>
+                  </div>
+                  <div className="video-meta-item highlight">
+                    <span className="meta-lbl">Target Resolusi ({scale}x)</span>
+                    <span className="meta-val">
+                      {videoMeta.width * scale} × {videoMeta.height * scale}
+                    </span>
+                  </div>
+                  <div className="video-meta-item highlight">
+                    <span className="meta-lbl">Target FPS</span>
+                    <span className="meta-val">
+                      {targetFps === 0 ? 'Asli' : targetFps === 60 ? '60 FPS' : '2x FPS'}
+                    </span>
+                  </div>
+                  <div className="video-meta-item">
+                    <span className="meta-lbl">Durasi</span>
+                    <span className="meta-val">{videoMeta.durationFormatted}</span>
+                  </div>
+                  <div className="video-meta-item">
+                    <span className="meta-lbl">Ukuran File</span>
+                    <span className="meta-val">{videoMeta.size}</span>
+                  </div>
+                  <div className="video-meta-item">
+                    <span className="meta-lbl">Model AI</span>
+                    <span className="meta-val">
+                      {model === 'general-fast' ? '⚡ Fast' : model === 'general-x4' ? '💎 Ultra' : '🎨 Anime'}
+                    </span>
+                  </div>
+                </div>
+
+                {videoMeta.width * scale * videoMeta.height * scale > 3840 * 2160 && (
+                  <div className="video-meta-warning">
+                    <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: '2px', color: '#f97316' }} />
+                    <div>
+                      <strong>Perhatian Resolusi Tinggi:</strong> Target resolusi{' '}
+                      <strong>
+                        {videoMeta.width * scale}×{videoMeta.height * scale} ({getResLabel(videoMeta.width * scale, videoMeta.height * scale)})
+                      </strong>{' '}
+                      sangat besar. Disarankan memilih skala{' '}
+                      <strong>2x ({videoMeta.width * 2}×{videoMeta.height * 2})</strong> agar render GPU berjalan cepat, stabil, dan hemat memori.
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -357,15 +469,52 @@ export default function VideoStudio() {
               className={`scale-btn ${scale === 2 ? 'active' : ''}`}
               onClick={() => setScale(2)}
             >
-              2x (Cepat & Stabil)
+              2x {videoMeta?.width ? `(${videoMeta.width * 2}×${videoMeta.height * 2})` : '(Cepat & Stabil)'}
             </button>
             <button
               type="button"
               className={`scale-btn ${scale === 4 ? 'active' : ''}`}
               onClick={() => setScale(4)}
             >
-              4x (Detail Maksimal)
+              4x {videoMeta?.width ? `(${videoMeta.width * 4}×${videoMeta.height * 4})` : '(Detail Maksimal)'}
             </button>
+          </div>
+        </div>
+
+        {/* Frame Rate (FPS) Selector */}
+        <div className="control-group">
+          <label className="control-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span>⚡ Target Frame Rate (FPS)</span>
+          </label>
+          <div className="scale-buttons" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+            <button
+              type="button"
+              className={`scale-btn ${targetFps === 0 ? 'active' : ''}`}
+              onClick={() => setTargetFps(0)}
+            >
+              Asli (Bawaan)
+            </button>
+            <button
+              type="button"
+              className={`scale-btn ${targetFps === 60 ? 'active' : ''}`}
+              onClick={() => setTargetFps(60)}
+            >
+              60 FPS (Ultra Mulus)
+            </button>
+            <button
+              type="button"
+              className={`scale-btn ${targetFps === -2 ? 'active' : ''}`}
+              onClick={() => setTargetFps(-2)}
+            >
+              2x FPS (Double)
+            </button>
+          </div>
+          <div style={{ fontSize: '0.74rem', color: 'var(--text-dim)', marginTop: '6px' }}>
+            {targetFps === 0
+              ? 'ℹ️ Pertahankan frame rate bawaan video asli tanpa interpolasi gerak.'
+              : targetFps === 60
+              ? '✨ Interpolasi gerakan (motion interpolation) ke 60 FPS untuk video yang jauh lebih mulus.'
+              : '🚀 Menggandakan jumlah frame per detik (misal 24 FPS menjadi 48 FPS, 30 FPS menjadi 60 FPS).'}
           </div>
         </div>
 

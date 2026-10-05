@@ -102,6 +102,11 @@ def parse_args():
         type=int,
         default=DEFAULT_JPG_QUALITY,
         help="Kualitas jika format output jpg (default: 95)",
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=0,
+        help="Target frame rate (FPS) video (misal: 60 untuk 60 FPS, -2 untuk 2x FPS asli, 0 = pertahankan asli)",
     )
     parser.add_argument(
         "--crf",
@@ -242,6 +247,7 @@ def main():
                     start=args.start,
                     end=args.end,
                     overwrite=args.overwrite,
+                    target_fps=args.fps,
                 )
             success_count += 1
         except KeyboardInterrupt:

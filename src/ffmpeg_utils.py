@@ -51,6 +51,22 @@ def detect_nvenc() -> bool:
         return False
 
 
+def detect_hevc_nvenc() -> bool:
+    """Check if ffmpeg supports NVIDIA HEVC NVENC hardware acceleration."""
+    try:
+        res = subprocess.run(
+            ["ffmpeg", "-encoders"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        return "hevc_nvenc" in res.stdout
+    except Exception as e:
+        logger.debug(f"Error checking hevc_nvenc support: {e}")
+        return False
+
+
 def probe_video(video_path: Path) -> Dict[str, Any]:
     """Probe video metadata using ffprobe."""
     ensure_ffmpeg()
@@ -169,26 +185,51 @@ def encode_video_from_frames(
     has_audio: bool = False,
     start: Optional[float] = None,
     end: Optional[float] = None,
+    target_fps: Optional[int] = None,
 ) -> None:
     """
     Encode upscaled frames into an MP4 video, merging audio from audio_source if available.
+    Supports motion-compensated / blended frame rate interpolation if target_fps is provided.
     """
     ensure_ffmpeg()
     output_video_path.parent.mkdir(parents=True, exist_ok=True)
     pattern = str(frames_dir / "%08d.png")
 
+    # Check frame resolution from first frame
+    first_frame = next(frames_dir.glob("*.png"), None)
+    frame_w, frame_h = 0, 0
+    if first_frame:
+        try:
+            from PIL import Image
+            with Image.open(first_frame) as img:
+                frame_w, frame_h = img.width, img.height
+        except Exception:
+            pass
+
+    is_ultra_res = frame_w > 4096 or frame_h > 4096
+
     # Select codec
     nvenc_supported = detect_nvenc()
+    hevc_nvenc_supported = detect_hevc_nvenc()
     selected_codec = codec
+
     if codec == "auto":
-        selected_codec = "h264_nvenc" if nvenc_supported else "libx264"
-    elif "nvenc" in codec and not nvenc_supported:
+        # NVENC H.264 has a hardware limit of 4096x4096. For 8K (>4096), prioritize HEVC NVENC
+        if is_ultra_res and hevc_nvenc_supported:
+            selected_codec = "hevc_nvenc"
+        elif nvenc_supported and not is_ultra_res:
+            selected_codec = "h264_nvenc"
+        elif hevc_nvenc_supported:
+            selected_codec = "hevc_nvenc"
+        else:
+            selected_codec = "libx264"
+    elif "nvenc" in codec and not (nvenc_supported or hevc_nvenc_supported):
         logger.warning(
             f"Codec {codec} diminta tetapi NVENC tidak tersedia pada FFmpeg. Fallback ke libx264."
         )
         selected_codec = "libx264"
 
-    def build_cmd(use_codec: str) -> List[str]:
+    def build_cmd(use_codec: str, include_interpolation: bool = True) -> List[str]:
         cmd: List[str] = [
             "ffmpeg", "-y",
             "-framerate", str(fps_rational),
@@ -203,6 +244,14 @@ def encode_video_from_frames(
                 cmd.extend(["-to", str(end)])
             cmd.extend(["-i", str(audio_source.resolve())])
 
+        # Motion Interpolation (Up FPS)
+        if include_interpolation and target_fps and target_fps > 0:
+            if is_ultra_res or frame_w > 1920:
+                vf_expr = f"minterpolate=fps={target_fps}:mi_mode=blend"
+            else:
+                vf_expr = f"minterpolate=fps={target_fps}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1"
+            cmd.extend(["-vf", vf_expr, "-r", str(target_fps)])
+
         # Video encoding settings
         if "nvenc" in use_codec:
             cmd.extend([
@@ -211,13 +260,21 @@ def encode_video_from_frames(
                 "-cq", str(crf),
                 "-pix_fmt", "yuv420p",
             ])
+            if "hevc" in use_codec:
+                cmd.extend(["-tag:v", "hvc1"])
         else:
             cmd.extend([
                 "-c:v", "libx264",
-                "-preset", "medium",
+                "-preset", "fast" if is_ultra_res else "medium",
                 "-crf", str(crf),
                 "-pix_fmt", "yuv420p",
             ])
+            if is_ultra_res:
+                # Restrict threads and lookahead buffer for 8K/ultra-res to prevent malloc OOM crashes
+                cmd.extend([
+                    "-threads", "4",
+                    "-x264-params", "rc-lookahead=10:sync-lookahead=2",
+                ])
 
         # Audio encoding settings
         if has_audio and audio_source and audio_source.is_file():
@@ -241,7 +298,7 @@ def encode_video_from_frames(
     if res.returncode != 0:
         if "nvenc" in selected_codec:
             logger.warning(
-                f"NVENC encoding gagal ({res.stderr.strip()[:100]}...). Mencoba ulang dengan libx264 CPU..."
+                f"NVENC encoding ({selected_codec}) gagal: {res.stderr.strip()[:120]}... Mencoba fallback CPU..."
             )
             fallback_cmd = build_cmd("libx264")
             res_fb = subprocess.run(fallback_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

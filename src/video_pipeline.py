@@ -57,6 +57,7 @@ def process_video(
     upsampler: Optional[RealESRGANer] = None,
     face_enhancer: Optional[GFPGANer] = None,
     progress_callback: Optional[Callable[[int, str], None]] = None,
+    target_fps: int = 0,
 ) -> Path:
     """
     Process a video file according to specifications:
@@ -228,10 +229,20 @@ def process_video(
         )
         raise
 
+    # Calculate target FPS if requested
+    computed_fps = 0
+    if target_fps == -2:
+        computed_fps = int(round(info["fps_float"] * 2))
+    elif target_fps > 0:
+        computed_fps = int(target_fps)
+
+    final_target_fps = computed_fps if computed_fps > round(info["fps_float"]) else 0
+    fps_msg = f" ({final_target_fps} FPS Motion Interpolation)" if final_target_fps > 0 else ""
+
     # Encode video
-    logger.info(f"Melakukan re-encode frame ke file video: {out_path.name}...")
+    logger.info(f"Melakukan re-encode frame ke file video: {out_path.name}{fps_msg}...")
     if progress_callback:
-        progress_callback(90, f"Meng-encode ulang video (NVENC / H.264 & audio sync)...")
+        progress_callback(90, f"Meng-encode ulang video{fps_msg} (NVENC / H.264 & audio sync)...")
 
     encode_video_from_frames(
         frames_dir=frames_out_dir,
@@ -243,6 +254,7 @@ def process_video(
         has_audio=has_audio,
         start=start,
         end=end,
+        target_fps=final_target_fps if final_target_fps > 0 else None,
     )
 
     logger.info(f"Video upscaling selesai: {out_path}")
