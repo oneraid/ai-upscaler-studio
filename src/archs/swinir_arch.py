@@ -5,6 +5,7 @@
 import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 
 try:
@@ -180,6 +181,7 @@ class WindowAttention(nn.Module):
         attn = attn + relative_position_bias.unsqueeze(0)
 
         if mask is not None:
+            mask = mask.to(dtype=attn.dtype, device=attn.device)
             nw = mask.shape[0]
             attn = attn.view(b_ // nw, nw, self.num_heads, n, n) + mask.unsqueeze(1).unsqueeze(0)
             attn = attn.view(-1, self.num_heads, n, n)
@@ -323,7 +325,7 @@ class SwinTransformerBlock(nn.Module):
         if self.input_resolution == x_size:
             attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nw*b, window_size*window_size, c
         else:
-            attn_windows = self.attn(x_windows, mask=self.calculate_mask(x_size).to(x.device))
+            attn_windows = self.attn(x_windows, mask=self.calculate_mask(x_size).to(device=x.device, dtype=x.dtype))
 
         # merge windows
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, c)
