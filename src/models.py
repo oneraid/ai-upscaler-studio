@@ -94,6 +94,12 @@ class ModelManager:
         device: Optional[torch.device] = None,
     ) -> RealESRGANer:
         """Get or load a cached RealESRGANer instance."""
+        weights_path = get_model_weights_path(model_name)
+        model_info = MODEL_REGISTRY[model_name]
+        arch = model_info["arch"]
+        arch_params = model_info["arch_params"]
+        scale = model_info["scale"]
+
         cuda_ok = is_cuda_available()
         if not cuda_ok:
             logger.warning(
@@ -108,15 +114,14 @@ class ModelManager:
             device = device or torch.device("cuda")
             half = not fp32
 
+        # SwinIR transformer attention layers overflow in FP16 leading to NaNs (black output).
+        # SwinIR must always run in full FP32 precision.
+        if arch == "SwinIR":
+            half = False
+
         cache_key = f"{model_name}_{half}_{tile}_{device}"
         if cache_key in self._upsamplers:
             return self._upsamplers[cache_key]
-
-        weights_path = get_model_weights_path(model_name)
-        model_info = MODEL_REGISTRY[model_name]
-        arch = model_info["arch"]
-        arch_params = model_info["arch_params"]
-        scale = model_info["scale"]
 
         if arch == "RRDBNet":
             model_net = RRDBNet(**arch_params)

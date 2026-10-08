@@ -282,13 +282,6 @@ def process_image(
                 paste_back=True,
                 weight=face_weight,
             )
-            # Jika skala 8x, lakukan tahap kedua 2x AI upscale pada hasil restorasi 4x
-            if scale == 8:
-                logger.info("Menjalankan tahap kedua 2x AI upscale untuk mencapai resolusi 8x...")
-                if progress_callback:
-                    progress_callback(65, "Menjalankan AI upscale tahap 2 (8x Ultra-HD)...")
-                restored_8x, _ = upsampler.enhance(restored, outscale=2)
-                return restored_8x
             return restored
 
         enhanced_bgr = enhance_with_oom_recovery(_run_face, upsampler)
@@ -297,17 +290,8 @@ def process_image(
         if progress_callback:
             progress_callback(45, f"Meningkatkan resolusi ({scale}x) dengan {model_name}...")
         def _run_upscale():
-            if scale == 8:
-                # 2-stage neural super-resolution: 4x lalu 2x
-                logger.info("Menjalankan 2-stage super-resolution untuk 8x...")
-                stage1, _ = upsampler.enhance(bgr, outscale=4)
-                if progress_callback:
-                    progress_callback(65, "Menjalankan AI upscale tahap 2 (8x Ultra-HD)...")
-                stage2, _ = upsampler.enhance(stage1, outscale=2)
-                return stage2
-            else:
-                output, _ = upsampler.enhance(bgr, outscale=scale)
-                return output
+            output, _ = upsampler.enhance(bgr, outscale=min(scale, 4))
+            return output
 
         enhanced_bgr = enhance_with_oom_recovery(_run_upscale, upsampler)
 
