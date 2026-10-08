@@ -6,7 +6,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Optional, Callable, Any
 
 import cv2
 import numpy as np
@@ -19,6 +19,7 @@ from src.config import (
     WORK_DIR,
     DEFAULT_SCALE,
     DEFAULT_TILE,
+    DEFAULT_FACE_MODEL,
     DEFAULT_FACE_WEIGHT,
     DEFAULT_CRF,
 )
@@ -44,6 +45,7 @@ def process_video(
     scale: int = DEFAULT_SCALE,
     model_name: str = "general-fast",
     face: bool = False,
+    face_model: str = DEFAULT_FACE_MODEL,
     face_weight: float = DEFAULT_FACE_WEIGHT,
     tile: int = DEFAULT_TILE,
     fp32: bool = False,
@@ -55,7 +57,7 @@ def process_video(
     end: Optional[float] = None,
     overwrite: bool = False,
     upsampler: Optional[RealESRGANer] = None,
-    face_enhancer: Optional[GFPGANer] = None,
+    face_enhancer: Optional[Any] = None,
     progress_callback: Optional[Callable[[int, str], None]] = None,
     target_fps: int = 0,
 ) -> Path:
@@ -170,6 +172,7 @@ def process_video(
     if face and face_enhancer is None:
         face_enhancer = model_manager.get_face_enhancer(
             target_scale=scale,
+            face_model=face_model,
             bg_upsampler=upsampler
         )
 

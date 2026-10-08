@@ -44,6 +44,7 @@ export default function VideoStudio() {
   const [scale, setScale] = useState(2);
   const [targetFps, setTargetFps] = useState(0);
   const [useFace, setUseFace] = useState(false);
+  const [faceModel, setFaceModel] = useState('codeformer');
   const [faceWeight, setFaceWeight] = useState(0.5);
   const [isTrim, setIsTrim] = useState(false);
   const [startSec, setStartSec] = useState(0);
@@ -269,6 +270,7 @@ export default function VideoStudio() {
     formData.append('scale', scale);
     formData.append('target_fps', targetFps);
     formData.append('face', useFace);
+    formData.append('face_model', faceModel);
     formData.append('face_weight', faceWeight);
     formData.append('is_trim', isTrim);
     formData.append('start_sec', startSec);
@@ -532,6 +534,58 @@ export default function VideoStudio() {
               style={{ width: '18px', height: '18px', accentColor: 'var(--accent-primary)', cursor: 'pointer' }}
             />
           </div>
+
+          {useFace && (
+            <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {[
+                  { id: 'codeformer', label: 'CodeFormer (Tajam)' },
+                  { id: 'gfpgan', label: 'GFPGAN v1.4' },
+                ].map((fm) => (
+                  <button
+                    key={fm.id}
+                    type="button"
+                    onClick={() => setFaceModel(fm.id)}
+                    style={{
+                      flex: 1,
+                      padding: '5px 4px',
+                      borderRadius: '6px',
+                      border: faceModel === fm.id ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                      background: faceModel === fm.id ? 'rgba(99, 102, 241, 0.25)' : 'transparent',
+                      color: faceModel === fm.id ? '#fff' : 'var(--text-dim)',
+                      fontSize: '0.72rem',
+                      fontWeight: faceModel === fm.id ? 700 : 500,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {fm.label}
+                  </button>
+                ))}
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
+                  <span>Kekuatan Wajah ({faceModel})</span>
+                  <span style={{ fontWeight: 700, color: '#fff' }}>{faceWeight}</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1.0"
+                  step="0.05"
+                  value={faceWeight}
+                  onChange={(e) => setFaceWeight(parseFloat(e.target.value))}
+                  className="custom-range"
+                />
+              </div>
+
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
+                {faceModel === 'codeformer'
+                  ? '🎯 CodeFormer: Restorasi detail mata, rambut, dan tekstur wajah sangat tajam.'
+                  : '🌸 GFPGAN v1.4: Restorasi wajah natural dan mulus antar frame video.'}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Trim Test Option */}
