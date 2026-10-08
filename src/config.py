@@ -71,8 +71,8 @@ MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {
         "description": "Optimized for anime / illustrations (6-block RRDBNet)",
     },
     "swinir-x4": {
-        "filename": "003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-M_x4_GAN.pth",
-        "url": "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-M_x4_GAN.pth",
+        "filename": "003_realSR_BSRGAN_DFO_s64w8_SwinIR-M_x4_GAN.pth",
+        "url": "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/003_realSR_BSRGAN_DFO_s64w8_SwinIR-M_x4_GAN.pth",
         "arch": "SwinIR",
         "scale": 4,
         "arch_params": {

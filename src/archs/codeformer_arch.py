@@ -160,7 +160,6 @@ class Fuse_sft_block(nn.Module):
         return out
 
 
-@ARCH_REGISTRY.register()
 class CodeFormer(VQAutoEncoder):
     def __init__(self, dim_embd=512, n_head=8, n_layers=9, 
                 codebook_size=1024, latent_size=256,

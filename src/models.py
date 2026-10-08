@@ -219,7 +219,7 @@ class CodeFormerRestorer:
 
         self.codeformer = CodeFormer(
             dim_embd=512, codebook_size=1024, n_head=8, n_layers=9,
-            connect_list=['16', '32', '64']
+            connect_list=['32', '64', '128', '256']
         )
         loadnet = torch.load(model_path, map_location="cpu")
         keyname = 'params_ema' if 'params_ema' in loadnet else ('params' if 'params' in loadnet else None)
@@ -228,7 +228,7 @@ class CodeFormerRestorer:
         self.codeformer.eval().to(self.device)
 
         self.face_helper = FaceRestoreHelper(
-            upscale=upscale,
+            upscale_factor=upscale,
             face_size=512,
             crop_ratio=(1, 1),
             det_model='retinaface_resnet50',

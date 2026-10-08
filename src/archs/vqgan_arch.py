@@ -323,7 +323,6 @@ class Generator(nn.Module):
         return x
 
   
-@ARCH_REGISTRY.register()
 class VQAutoEncoder(nn.Module):
     def __init__(self, img_size, nf, ch_mult, quantizer="nearest", res_blocks=2, attn_resolutions=[16], codebook_size=1024, emb_dim=256,
                 beta=0.25, gumbel_straight_through=False, gumbel_kl_weight=1e-8, model_path=None):
@@ -391,7 +390,6 @@ class VQAutoEncoder(nn.Module):
 
 
 # patch based discriminator
-@ARCH_REGISTRY.register()
 class VQGANDiscriminator(nn.Module):
     def __init__(self, nc=3, ndf=64, n_layers=4, model_path=None):
         super().__init__()
