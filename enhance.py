@@ -51,27 +51,40 @@ def parse_args():
     parser.add_argument(
         "-s", "--scale",
         type=int,
-        choices=[2, 3, 4],
+        choices=[2, 3, 4, 8],
         default=DEFAULT_SCALE,
-        help="Faktor upscale: 2, 3, atau 4 (default: 4)",
+        help="Faktor upscale: 2, 3, 4, atau 8 (default: 4)",
     )
     parser.add_argument(
         "-m", "--model",
         type=str,
         default="auto",
-        choices=["auto", "general-x4", "general-fast", "anime"],
+        choices=["auto", "general-x4", "swinir-x4", "general-fast", "anime"],
         help="Model AI (auto: foto = general-x4, video = general-fast)",
     )
     parser.add_argument(
         "--face",
         action="store_true",
-        help="Aktifkan restorasi wajah dengan GFPGAN",
+        help="Aktifkan restorasi wajah (GFPGAN / CodeFormer)",
+    )
+    parser.add_argument(
+        "--face-model",
+        type=str,
+        default="gfpgan",
+        choices=["gfpgan", "codeformer", "restoreformer"],
+        help="Model restorasi wajah: gfpgan, codeformer, atau restoreformer (default: gfpgan)",
     )
     parser.add_argument(
         "--face-weight",
         type=float,
         default=DEFAULT_FACE_WEIGHT,
-        help="Bobot blend restorasi wajah 0.0 - 1.0 (default: 0.5)",
+        help="Bobot blend restorasi wajah 0.0 - 1.0 (default: 0.6)",
+    )
+    parser.add_argument(
+        "--clarity",
+        type=float,
+        default=DEFAULT_CLARITY,
+        help="Tingkat ketajaman / micro-contrast unsharp mask 0.0 - 1.0 (default: 0.0)",
     )
     parser.add_argument(
         "--tile",
@@ -222,7 +235,9 @@ def main():
                     scale=args.scale,
                     model_name=selected_model,
                     face=args.face,
+                    face_model=args.face_model,
                     face_weight=args.face_weight,
+                    clarity=args.clarity,
                     tile=args.tile,
                     fp32=args.fp32,
                     max_side=args.max_side,

@@ -18,6 +18,7 @@ export default function BatchStudio() {
   const [model, setModel] = useState('general-x4');
   const [scale, setScale] = useState(4);
   const [useFace, setUseFace] = useState(false);
+  const [faceModel, setFaceModel] = useState('codeformer');
   const [format, setFormat] = useState('png');
 
   const [isProcessing, setIsProcessing] = useState(false);
@@ -225,6 +226,7 @@ export default function BatchStudio() {
     formData.append('model', model);
     formData.append('scale', scale);
     formData.append('face', useFace);
+    formData.append('face_model', faceModel);
     formData.append('format', format);
 
     try {
@@ -292,13 +294,21 @@ export default function BatchStudio() {
         {/* Model Selector */}
         <div className="control-group">
           <label className="control-label">Model AI</label>
-          <div className="model-selector">
+          <div className="model-selector" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
             <div
               className={`model-card ${model === 'general-x4' ? 'active' : ''}`}
               onClick={() => setModel('general-x4')}
             >
               <div className="title">💎 Ultra</div>
-              <div className="desc">Kualitas tinggi</div>
+              <div className="desc">Real-ESRGAN x4plus</div>
+            </div>
+
+            <div
+              className={`model-card ${model === 'swinir-x4' ? 'active' : ''}`}
+              onClick={() => setModel('swinir-x4')}
+            >
+              <div className="title">🔮 SwinIR</div>
+              <div className="desc">SOTA Transformer</div>
             </div>
 
             <div
@@ -321,26 +331,26 @@ export default function BatchStudio() {
 
         {/* Scale */}
         <div className="control-group">
-          <label className="control-label">Perbesaran</label>
+          <label className="control-label">Faktor Perbesaran</label>
           <div className="scale-buttons">
-            {[2, 3, 4].map((s) => (
+            {[2, 3, 4, 8].map((s) => (
               <button
                 key={s}
                 type="button"
                 className={`scale-btn ${scale === s ? 'active' : ''}`}
                 onClick={() => setScale(s)}
               >
-                {s}x
+                {s}x {s === 8 ? '🔥' : ''}
               </button>
             ))}
           </div>
         </div>
 
-        {/* Face toggle */}
+        {/* Face toggle & engine */}
         <div className="control-group">
           <div className="switch-row">
             <div className="switch-label">
-              <span className="switch-title">Restorasi Wajah GFPGAN</span>
+              <span className="switch-title">Restorasi Wajah AI</span>
               <span className="switch-desc">Terapkan pada semua foto</span>
             </div>
             <input
@@ -350,6 +360,34 @@ export default function BatchStudio() {
               style={{ width: '18px', height: '18px', accentColor: 'var(--accent-primary)', cursor: 'pointer' }}
             />
           </div>
+
+          {useFace && (
+            <div style={{ marginTop: '8px', display: 'flex', gap: '6px' }}>
+              {[
+                { id: 'codeformer', label: 'CodeFormer (Tajam)' },
+                { id: 'gfpgan', label: 'GFPGAN' },
+              ].map((fm) => (
+                <button
+                  key={fm.id}
+                  type="button"
+                  onClick={() => setFaceModel(fm.id)}
+                  style={{
+                    flex: 1,
+                    padding: '5px 4px',
+                    borderRadius: '6px',
+                    border: faceModel === fm.id ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                    background: faceModel === fm.id ? 'rgba(99, 102, 241, 0.25)' : 'transparent',
+                    color: faceModel === fm.id ? '#fff' : 'var(--text-dim)',
+                    fontSize: '0.72rem',
+                    fontWeight: faceModel === fm.id ? 700 : 500,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {fm.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Primary Action Button */}

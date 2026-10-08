@@ -23,7 +23,9 @@ export default function PhotoStudio() {
   const [model, setModel] = useState('general-x4');
   const [scale, setScale] = useState(4);
   const [useFace, setUseFace] = useState(false);
+  const [faceModel, setFaceModel] = useState('codeformer');
   const [faceWeight, setFaceWeight] = useState(0.6);
+  const [clarity, setClarity] = useState(20);
   const [tile, setTile] = useState(400);
   const [format, setFormat] = useState('png');
   const [quality, setQuality] = useState(95);
@@ -240,7 +242,9 @@ export default function PhotoStudio() {
     formData.append('model', model);
     formData.append('scale', scale);
     formData.append('face', useFace);
+    formData.append('face_model', faceModel);
     formData.append('face_weight', faceWeight);
+    formData.append('clarity', (clarity / 100.0).toFixed(2));
     formData.append('tile', tile);
     formData.append('format', format);
     formData.append('quality', quality);
@@ -325,13 +329,21 @@ export default function PhotoStudio() {
         {/* Model Selector */}
         <div className="control-group">
           <label className="control-label">Pilihan Model AI</label>
-          <div className="model-selector">
+          <div className="model-selector" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
             <div
               className={`model-card ${model === 'general-x4' ? 'active' : ''}`}
               onClick={() => setModel('general-x4')}
             >
               <div className="title">💎 Ultra</div>
-              <div className="desc">Detail tertinggi</div>
+              <div className="desc">Real-ESRGAN x4plus</div>
+            </div>
+
+            <div
+              className={`model-card ${model === 'swinir-x4' ? 'active' : ''}`}
+              onClick={() => setModel('swinir-x4')}
+            >
+              <div className="title">🔮 SwinIR</div>
+              <div className="desc">SOTA Transformer</div>
             </div>
 
             <div
@@ -354,27 +366,27 @@ export default function PhotoStudio() {
 
         {/* Scale Buttons */}
         <div className="control-group">
-          <label className="control-label">Faktor Perbesaran</label>
+          <label className="control-label">Faktor Perbesaran (Resolusi)</label>
           <div className="scale-buttons">
-            {[2, 3, 4].map((s) => (
+            {[2, 3, 4, 8].map((s) => (
               <button
                 key={s}
                 type="button"
                 className={`scale-btn ${scale === s ? 'active' : ''}`}
                 onClick={() => setScale(s)}
               >
-                {s}x
+                {s}x {s === 8 ? '🔥' : ''}
               </button>
             ))}
           </div>
         </div>
 
-        {/* Face Restoration Toggle */}
+        {/* Face Restoration Toggle & Engine */}
         <div className="control-group">
           <div className="switch-row">
             <div className="switch-label">
-              <span className="switch-title">✨ Restorasi Wajah (GFPGAN)</span>
-              <span className="switch-desc">Pertajam mata, bibir, dan kulit wajah</span>
+              <span className="switch-title">✨ Restorasi Wajah AI</span>
+              <span className="switch-desc">Pertajam mata, kulit, dan helai rambut</span>
             </div>
             <input
               type="checkbox"
@@ -385,22 +397,74 @@ export default function PhotoStudio() {
           </div>
 
           {useFace && (
-            <div style={{ marginTop: '8px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
-                <span>Kekuatan Wajah</span>
-                <span style={{ fontWeight: 700, color: '#fff' }}>{faceWeight}</span>
+            <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {[
+                  { id: 'codeformer', label: 'CodeFormer (Tajam)', desc: 'Natural & detail' },
+                  { id: 'gfpgan', label: 'GFPGAN v1.4', desc: 'Smooth aesthetic' },
+                  { id: 'restoreformer', label: 'RestoreFormer', desc: 'Transformer' },
+                ].map((fm) => (
+                  <button
+                    key={fm.id}
+                    type="button"
+                    onClick={() => setFaceModel(fm.id)}
+                    style={{
+                      flex: 1,
+                      padding: '6px 4px',
+                      borderRadius: '6px',
+                      border: faceModel === fm.id ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                      background: faceModel === fm.id ? 'rgba(99, 102, 241, 0.25)' : 'rgba(255,255,255,0.03)',
+                      color: faceModel === fm.id ? '#fff' : 'var(--text-dim)',
+                      fontSize: '0.72rem',
+                      fontWeight: faceModel === fm.id ? 700 : 500,
+                      cursor: 'pointer',
+                      textAlign: 'center',
+                    }}
+                  >
+                    <div>{fm.label}</div>
+                  </button>
+                ))}
               </div>
-              <input
-                type="range"
-                min="0.1"
-                max="1.0"
-                step="0.05"
-                value={faceWeight}
-                onChange={(e) => setFaceWeight(parseFloat(e.target.value))}
-                className="custom-range"
-              />
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
+                  <span>Kekuatan Wajah ({faceModel})</span>
+                  <span style={{ fontWeight: 700, color: '#fff' }}>{faceWeight}</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1.0"
+                  step="0.05"
+                  value={faceWeight}
+                  onChange={(e) => setFaceWeight(parseFloat(e.target.value))}
+                  className="custom-range"
+                />
+              </div>
             </div>
           )}
+        </div>
+
+        {/* Clarity & Micro-Contrast Post-Processing */}
+        <div className="control-group">
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span>🔍 Ketajaman / Clarity</span>
+              <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>(Unsharp Mask)</span>
+            </span>
+            <span style={{ fontWeight: 700, color: clarity > 0 ? 'var(--accent-primary)' : '#fff' }}>
+              {clarity}% {clarity === 0 ? '(Off)' : clarity > 50 ? '(Ultra Crisp)' : '(Subtle)'}
+            </span>
+          </div>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            step="5"
+            value={clarity}
+            onChange={(e) => setClarity(parseInt(e.target.value))}
+            className="custom-range"
+          />
         </div>
 
         {/* Advanced Accordion */}

@@ -18,11 +18,55 @@ from src.config import (
     DEFAULT_TILE,
     DEFAULT_MAX_SIDE,
     DEFAULT_FACE_WEIGHT,
+    DEFAULT_FACE_MODEL,
+    DEFAULT_CLARITY,
     DEFAULT_JPG_QUALITY,
     TILE_FALLBACKS,
 )
 from src.models import model_manager
 from src.utils import logger, clean_cuda_cache, get_output_filepath
+
+
+def apply_clarity(image: np.ndarray, clarity: float = 0.0) -> np.ndarray:
+    """
+    Apply adaptive micro-contrast and unsharp mask in CIELAB color space.
+    Enhances fine details, skin pores, hair, and edges without color distortion.
+    clarity: 0.0 (no effect) to 1.0 (crisp HD enhancement).
+    """
+    if clarity <= 0.001 or image is None:
+        return image
+
+    has_alpha = len(image.shape) == 3 and image.shape[2] == 4
+    is_gray = len(image.shape) == 2
+
+    if has_alpha:
+        bgr = image[:, :, :3]
+        alpha = image[:, :, 3]
+    elif is_gray:
+        bgr = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+        alpha = None
+    else:
+        bgr = image
+        alpha = None
+
+    # Operasikan pada Luminance (L channel) di LAB space
+    lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+
+    # Adaptive unsharp mask
+    amount = float(clarity) * 1.5
+    blurred = cv2.GaussianBlur(l, (0, 0), sigmaX=2.0)
+    sharp_l = cv2.addWeighted(l, 1.0 + amount, blurred, -amount, 0)
+    sharp_l = np.clip(sharp_l, 0, 255).astype(np.uint8)
+
+    enhanced_lab = cv2.merge([sharp_l, a, b])
+    enhanced_bgr = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
+
+    if has_alpha:
+        return np.dstack([enhanced_bgr, alpha])
+    elif is_gray:
+        return cv2.cvtColor(enhanced_bgr, cv2.COLOR_BGR2GRAY)
+    return enhanced_bgr
 
 
 def read_image_with_exif(image_path: Path) -> np.ndarray:
@@ -149,7 +193,9 @@ def process_image(
     scale: int = DEFAULT_SCALE,
     model_name: str = "general-x4",
     face: bool = False,
+    face_model: str = DEFAULT_FACE_MODEL,
     face_weight: float = DEFAULT_FACE_WEIGHT,
+    clarity: float = DEFAULT_CLARITY,
     tile: int = DEFAULT_TILE,
     fp32: bool = False,
     max_side: int = DEFAULT_MAX_SIDE,
@@ -157,18 +203,18 @@ def process_image(
     jpg_quality: int = DEFAULT_JPG_QUALITY,
     overwrite: bool = False,
     upsampler: Optional[RealESRGANer] = None,
-    face_enhancer: Optional[GFPGANer] = None,
+    face_enhancer: Optional[Any] = None,
     progress_callback: Optional[Callable[[int, str], None]] = None,
 ) -> Path:
     """
     Process a single image according to specification:
     1. Read with EXIF correction.
     2. Handle alpha and grayscale channels.
-    3. Upscale with Real-ESRGAN (and GFPGAN if face=True).
-    4. Handle CUDA OOM with automatic tile reduction.
-    5. Resize to target scale if scale != 4.
-    6. Apply max_side limit.
-    7. Save to output directory or file.
+    3. Upscale with Real-ESRGAN / SwinIR (and GFPGAN / CodeFormer if face=True).
+    4. Support 8x upscale via high-detail multi-stage super-resolution.
+    5. Handle CUDA OOM with automatic tile reduction.
+    6. Apply clarity / micro-contrast sharpening post-processing.
+    7. Apply max_side limit and save to output directory.
     """
     if progress_callback:
         progress_callback(5, "Menyiapkan berkas...")
@@ -182,7 +228,7 @@ def process_image(
             progress_callback(100, "File sudah ada, selesai.")
         return out_path
 
-    logger.info(f"Memproses foto: {input_path.name} -> {out_path.name} (Scale: {scale}x, Model: {model_name})")
+    logger.info(f"Memproses foto: {input_path.name} -> {out_path.name} (Scale: {scale}x, Model: {model_name}, Face: {face_model if face else 'None'}, Clarity: {clarity})")
     if progress_callback:
         progress_callback(15, f"Membaca gambar ({input_path.name})...")
 
@@ -216,17 +262,18 @@ def process_image(
 
     if face and face_enhancer is None:
         if progress_callback:
-            progress_callback(35, "Menyiapkan GFPGAN face enhancer...")
+            progress_callback(35, f"Menyiapkan face enhancer ({face_model.upper()})...")
         face_enhancer = model_manager.get_face_enhancer(
-            target_scale=scale,
+            target_scale=min(scale, 4),
+            face_model=face_model,
             bg_upsampler=upsampler
         )
 
     # Perform Upscaling & Face restoration
     if face:
-        logger.debug(f"Menjalankan face restoration dengan GFPGAN (weight={face_weight})...")
+        logger.debug(f"Menjalankan face restoration dengan {face_model.upper()} (weight={face_weight})...")
         if progress_callback:
-            progress_callback(45, f"Meningkatkan kualitas foto & wajah (GFPGAN)...")
+            progress_callback(45, f"Meningkatkan kualitas foto & wajah ({face_model.upper()})...")
         def _run_face():
             _, _, restored = face_enhancer.enhance(
                 bgr,
@@ -235,16 +282,32 @@ def process_image(
                 paste_back=True,
                 weight=face_weight,
             )
+            # Jika skala 8x, lakukan tahap kedua 2x AI upscale pada hasil restorasi 4x
+            if scale == 8:
+                logger.info("Menjalankan tahap kedua 2x AI upscale untuk mencapai resolusi 8x...")
+                if progress_callback:
+                    progress_callback(65, "Menjalankan AI upscale tahap 2 (8x Ultra-HD)...")
+                restored_8x, _ = upsampler.enhance(restored, outscale=2)
+                return restored_8x
             return restored
 
         enhanced_bgr = enhance_with_oom_recovery(_run_face, upsampler)
     else:
-        logger.debug(f"Menjalankan upscaling dengan Real-ESRGAN...")
+        logger.debug(f"Menjalankan upscaling ({scale}x) dengan {model_name}...")
         if progress_callback:
-            progress_callback(45, f"Meningkatkan resolusi ({scale}x) dengan Real-ESRGAN...")
+            progress_callback(45, f"Meningkatkan resolusi ({scale}x) dengan {model_name}...")
         def _run_upscale():
-            output, _ = upsampler.enhance(bgr, outscale=scale)
-            return output
+            if scale == 8:
+                # 2-stage neural super-resolution: 4x lalu 2x
+                logger.info("Menjalankan 2-stage super-resolution untuk 8x...")
+                stage1, _ = upsampler.enhance(bgr, outscale=4)
+                if progress_callback:
+                    progress_callback(65, "Menjalankan AI upscale tahap 2 (8x Ultra-HD)...")
+                stage2, _ = upsampler.enhance(stage1, outscale=2)
+                return stage2
+            else:
+                output, _ = upsampler.enhance(bgr, outscale=scale)
+                return output
 
         enhanced_bgr = enhance_with_oom_recovery(_run_upscale, upsampler)
 
@@ -273,6 +336,13 @@ def process_image(
         final_img = cv2.cvtColor(enhanced_bgr, cv2.COLOR_BGR2GRAY)
     else:
         final_img = enhanced_bgr
+
+    # Apply clarity / detail enhancement post-processing
+    if clarity > 0.001:
+        logger.debug(f"Menerapkan post-processing clarity (strength={clarity})...")
+        if progress_callback:
+            progress_callback(88, "Meningkatkan ketajaman & mikro-kontras (Clarity)...")
+        final_img = apply_clarity(final_img, clarity=clarity)
 
     # Apply max_side limit
     final_h, final_w = final_img.shape[:2]

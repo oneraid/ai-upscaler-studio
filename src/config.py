@@ -70,6 +70,26 @@ MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {
         },
         "description": "Optimized for anime / illustrations (6-block RRDBNet)",
     },
+    "swinir-x4": {
+        "filename": "003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-M_x4_GAN.pth",
+        "url": "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-M_x4_GAN.pth",
+        "arch": "SwinIR",
+        "scale": 4,
+        "arch_params": {
+            "upscale": 4,
+            "in_chans": 3,
+            "img_size": 64,
+            "window_size": 8,
+            "img_range": 1.0,
+            "depths": [6, 6, 6, 6, 6, 6],
+            "embed_dim": 180,
+            "num_heads": [6, 6, 6, 6, 6, 6],
+            "mlp_ratio": 2,
+            "upsampler": "nearest+conv",
+            "resi_connection": "1conv",
+        },
+        "description": "SwinIR Transformer, SOTA natural texture & clarity",
+    },
     "face": {
         "filename": "GFPGANv1.4.pth",
         "url": "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth",
@@ -80,6 +100,30 @@ MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {
         },
         "description": "Face restoration with GFPGAN v1.4",
     },
+    "gfpgan": {
+        "filename": "GFPGANv1.4.pth",
+        "url": "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth",
+        "arch": "GFPGANv1Clean",
+        "scale": 2,
+        "arch_params": {
+            "channel_multiplier": 2,
+        },
+        "description": "GFPGAN v1.4 (Smooth & aesthetic face beauty)",
+    },
+    "codeformer": {
+        "filename": "codeformer.pth",
+        "url": "https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth",
+        "arch": "CodeFormer",
+        "scale": 2,
+        "description": "CodeFormer (High fidelity natural details & crisp eyes/skin)",
+    },
+    "restoreformer": {
+        "filename": "RestoreFormer.pth",
+        "url": "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.4/RestoreFormer.pth",
+        "arch": "RestoreFormer",
+        "scale": 2,
+        "description": "RestoreFormer Transformer Face Restoration",
+    },
 }
 
 # Defaults
@@ -87,8 +131,10 @@ DEFAULT_SCALE = 4
 DEFAULT_TILE = 400
 DEFAULT_TILE_PAD = 10
 DEFAULT_PRE_PAD = 0
-DEFAULT_MAX_SIDE = 4096
-DEFAULT_FACE_WEIGHT = 0.5
+DEFAULT_MAX_SIDE = 8192
+DEFAULT_FACE_WEIGHT = 0.6
+DEFAULT_FACE_MODEL = "gfpgan"
+DEFAULT_CLARITY = 0.0
 DEFAULT_CRF = 18
 DEFAULT_JPG_QUALITY = 95
 

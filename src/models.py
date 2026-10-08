@@ -122,6 +122,9 @@ class ModelManager:
             model_net = RRDBNet(**arch_params)
         elif arch == "SRVGGNetCompact":
             model_net = SRVGGNetCompact(**arch_params)
+        elif arch == "SwinIR":
+            from src.archs.swinir_arch import SwinIR, SwinIRWrapper
+            model_net = SwinIR(**arch_params)
         else:
             raise ValueError(f"Unsupported architecture: {arch}")
 
@@ -140,35 +143,141 @@ class ModelManager:
             device=device,
         )
 
+        # Wrap SwinIR model to guarantee tile dimensions divisible by window_size
+        if arch == "SwinIR":
+            upsampler.model = SwinIRWrapper(upsampler.model, window_size=arch_params.get("window_size", 8))
+
         self._upsamplers[cache_key] = upsampler
         return upsampler
 
     def get_face_enhancer(
         self,
         target_scale: int = 4,
+        face_model: str = "gfpgan",
         bg_upsampler: Optional[RealESRGANer] = None,
         device: Optional[torch.device] = None,
-    ) -> GFPGANer:
-        """Get or load a cached GFPGANer face restorer instance."""
+    ) -> Any:
+        """Get or load a cached face restorer instance (GFPGAN, CodeFormer, or RestoreFormer)."""
         cuda_ok = is_cuda_available()
         device = device or (torch.device("cuda") if cuda_ok else torch.device("cpu"))
-        weights_path = get_model_weights_path("face")
+        
+        # Normalize face model key
+        face_key = face_model.lower().strip()
+        if face_key not in ("gfpgan", "codeformer", "restoreformer", "face"):
+            face_key = "gfpgan"
+        
+        weights_name = "face" if face_key == "face" else face_key
+        weights_path = get_model_weights_path(weights_name)
 
-        cache_key = f"face_{target_scale}_{id(bg_upsampler)}_{device}"
+        cache_key = f"{face_key}_{target_scale}_{id(bg_upsampler)}_{device}"
         if cache_key in self._face_enhancers:
             return self._face_enhancers[cache_key]
 
-        logger.info(f"Loading GFPGAN face enhancer (Target scale: {target_scale})...")
-        face_enhancer = GFPGANer(
-            model_path=str(weights_path),
-            upscale=target_scale,
-            arch="clean",
-            channel_multiplier=2,
-            bg_upsampler=bg_upsampler,
-            device=device,
-        )
+        logger.info(f"Loading {face_key.upper()} face enhancer (Target scale: {target_scale})...")
+        if face_key == "codeformer":
+            face_enhancer = CodeFormerRestorer(
+                model_path=str(weights_path),
+                upscale=target_scale,
+                bg_upsampler=bg_upsampler,
+                device=device,
+            )
+        elif face_key == "restoreformer":
+            face_enhancer = GFPGANer(
+                model_path=str(weights_path),
+                upscale=target_scale,
+                arch="RestoreFormer",
+                channel_multiplier=2,
+                bg_upsampler=bg_upsampler,
+                device=device,
+            )
+        else:
+            face_enhancer = GFPGANer(
+                model_path=str(weights_path),
+                upscale=target_scale,
+                arch="clean",
+                channel_multiplier=2,
+                bg_upsampler=bg_upsampler,
+                device=device,
+            )
+
         self._face_enhancers[cache_key] = face_enhancer
         return face_enhancer
+
+
+class CodeFormerRestorer:
+    """Helper for face restoration with CodeFormer model."""
+    def __init__(self, model_path: str, upscale: int = 2, bg_upsampler=None, device=None):
+        import cv2
+        from facexlib.utils.face_restoration_helper import FaceRestoreHelper
+        from basicsr.utils import img2tensor, tensor2img
+        from torchvision.transforms.functional import normalize
+        from src.archs.codeformer_arch import CodeFormer
+
+        self.upscale = upscale
+        self.bg_upsampler = bg_upsampler
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
+
+        self.codeformer = CodeFormer(
+            dim_embd=512, codebook_size=1024, n_head=8, n_layers=9,
+            connect_list=['16', '32', '64']
+        )
+        loadnet = torch.load(model_path, map_location="cpu")
+        keyname = 'params_ema' if 'params_ema' in loadnet else ('params' if 'params' in loadnet else None)
+        state_dict = loadnet[keyname] if keyname else loadnet
+        self.codeformer.load_state_dict(state_dict, strict=True)
+        self.codeformer.eval().to(self.device)
+
+        self.face_helper = FaceRestoreHelper(
+            upscale=upscale,
+            face_size=512,
+            crop_ratio=(1, 1),
+            det_model='retinaface_resnet50',
+            save_ext='png',
+            use_parse=True,
+            device=self.device,
+            model_rootpath='gfpgan/weights'
+        )
+
+    @torch.no_grad()
+    def enhance(self, img, has_aligned=False, only_center_face=False, paste_back=True, weight=0.6):
+        import cv2
+        from basicsr.utils import img2tensor, tensor2img
+        from torchvision.transforms.functional import normalize
+
+        self.face_helper.clean_all()
+        if has_aligned:
+            img = cv2.resize(img, (512, 512))
+            self.face_helper.cropped_faces = [img]
+        else:
+            self.face_helper.read_image(img)
+            self.face_helper.get_face_landmarks_5(only_center_face=only_center_face, eye_dist_threshold=5)
+            self.face_helper.align_warp_face()
+
+        for cropped_face in self.face_helper.cropped_faces:
+            cropped_face_t = img2tensor(cropped_face / 255.0, bgr2rgb=True, float32=True)
+            normalize(cropped_face_t, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5), inplace=True)
+            cropped_face_t = cropped_face_t.unsqueeze(0).to(self.device)
+
+            try:
+                output = self.codeformer(cropped_face_t, w=weight, adain=True)[0]
+                restored_face = tensor2img(output.squeeze(0), rgb2bgr=True, min_max=(-1, 1))
+            except Exception as e:
+                logger.warning(f"CodeFormer inference error: {e}")
+                restored_face = cropped_face
+
+            restored_face = restored_face.astype('uint8')
+            self.face_helper.add_restored_face(restored_face)
+
+        if not has_aligned and paste_back:
+            if self.bg_upsampler is not None:
+                bg_img = self.bg_upsampler.enhance(img, outscale=self.upscale)[0]
+            else:
+                bg_img = None
+            self.face_helper.get_inverse_affine(None)
+            restored_img = self.face_helper.paste_faces_to_input_image(upsample_img=bg_img)
+            return self.face_helper.cropped_faces, self.face_helper.restored_faces, restored_img
+        else:
+            return self.face_helper.cropped_faces, self.face_helper.restored_faces, None
 
 
 # Global model manager singleton
