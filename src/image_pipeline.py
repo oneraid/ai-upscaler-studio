@@ -24,7 +24,7 @@ from src.config import (
     TILE_FALLBACKS,
 )
 from src.models import model_manager
-from src.utils import logger, clean_cuda_cache, get_output_filepath
+from src.utils import logger, clean_cuda_cache, get_output_filepath, resolve_target_dimensions
 
 
 def apply_clarity(image: np.ndarray, clarity: float = 0.0) -> np.ndarray:
@@ -190,7 +190,8 @@ def enhance_with_oom_recovery(
 def process_image(
     input_path: Path,
     output_dest: Path,
-    scale: int = DEFAULT_SCALE,
+    scale: float = DEFAULT_SCALE,
+    target_res: Optional[str] = None,
     model_name: str = "general-x4",
     face: bool = False,
     face_model: str = DEFAULT_FACE_MODEL,
@@ -211,7 +212,7 @@ def process_image(
     1. Read with EXIF correction.
     2. Handle alpha and grayscale channels.
     3. Upscale with Real-ESRGAN / SwinIR (and GFPGAN / CodeFormer if face=True).
-    4. Support 8x upscale via high-detail multi-stage super-resolution.
+    4. Support 1x, 2x, 3x, 4x, 8x or target resolution (1080p, 1440p, 4K, 8K).
     5. Handle CUDA OOM with automatic tile reduction.
     6. Apply clarity / micro-contrast sharpening post-processing.
     7. Apply max_side limit and save to output directory.
@@ -219,8 +220,23 @@ def process_image(
     if progress_callback:
         progress_callback(5, "Menyiapkan berkas...")
 
+    # Read image
+    img = read_image_with_exif(input_path)
+    orig_h, orig_w = img.shape[:2]
+    is_grayscale = len(img.shape) == 2
+    has_alpha = len(img.shape) == 3 and img.shape[2] == 4
+
+    target_w, target_h, effective_scale = resolve_target_dimensions(
+        orig_w=orig_w,
+        orig_h=orig_h,
+        scale=scale,
+        target_res=target_res,
+        is_video=False
+    )
+
     custom_ext = f".{output_format}" if output_format else None
-    out_path = get_output_filepath(input_path, output_dest, scale, custom_ext)
+    scale_label = target_res if target_res else (int(scale) if float(scale).is_integer() else scale)
+    out_path = get_output_filepath(input_path, output_dest, scale_label, custom_ext)
 
     if out_path.exists() and not overwrite:
         logger.info(f"File output sudah ada, lewati (gunakan --overwrite untuk menimpa): {out_path.name}")
@@ -228,15 +244,13 @@ def process_image(
             progress_callback(100, "File sudah ada, selesai.")
         return out_path
 
-    logger.info(f"Memproses foto: {input_path.name} -> {out_path.name} (Scale: {scale}x, Model: {model_name}, Face: {face_model if face else 'None'}, Clarity: {clarity})")
+    logger.info(
+        f"Memproses foto: {input_path.name} -> {out_path.name} "
+        f"({orig_w}x{orig_h} -> {target_w}x{target_h}, Scale: {effective_scale:.2f}x, "
+        f"Model: {model_name}, Face: {face_model if face else 'None'}, Clarity: {clarity})"
+    )
     if progress_callback:
         progress_callback(15, f"Membaca gambar ({input_path.name})...")
-
-    # Read image
-    img = read_image_with_exif(input_path)
-    orig_h, orig_w = img.shape[:2]
-    is_grayscale = len(img.shape) == 2
-    has_alpha = len(img.shape) == 3 and img.shape[2] == 4
 
     # Separate RGB and Alpha if present
     if has_alpha:
@@ -264,7 +278,7 @@ def process_image(
         if progress_callback:
             progress_callback(35, f"Menyiapkan face enhancer ({face_model.upper()})...")
         face_enhancer = model_manager.get_face_enhancer(
-            target_scale=min(scale, 4),
+            target_scale=min(max(int(round(effective_scale)), 1), 4),
             face_model=face_model,
             bg_upsampler=upsampler
         )
@@ -286,11 +300,12 @@ def process_image(
 
         enhanced_bgr = enhance_with_oom_recovery(_run_face, upsampler)
     else:
-        logger.debug(f"Menjalankan upscaling ({scale}x) dengan {model_name}...")
+        logger.debug(f"Menjalankan upscaling ({effective_scale:.2f}x) dengan {model_name}...")
         if progress_callback:
-            progress_callback(45, f"Meningkatkan resolusi ({scale}x) dengan {model_name}...")
+            progress_callback(45, f"Meningkatkan resolusi ({effective_scale:.2f}x) dengan {model_name}...")
         def _run_upscale():
-            output, _ = upsampler.enhance(bgr, outscale=min(scale, 4))
+            model_outscale = min(max(int(round(effective_scale)), 1), 4)
+            output, _ = upsampler.enhance(bgr, outscale=model_outscale)
             return output
 
         enhanced_bgr = enhance_with_oom_recovery(_run_upscale, upsampler)
@@ -299,8 +314,6 @@ def process_image(
         progress_callback(80, "Menyesuaikan resolusi akhir...")
 
     # Ensure target scale resolution
-    target_w = int(round(orig_w * scale))
-    target_h = int(round(orig_h * scale))
     curr_h, curr_w = enhanced_bgr.shape[:2]
 
     if (curr_w, curr_h) != (target_w, target_h):

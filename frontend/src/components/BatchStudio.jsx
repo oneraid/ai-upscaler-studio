@@ -17,6 +17,7 @@ export default function BatchStudio() {
   const [files, setFiles] = useState([]);
   const [model, setModel] = useState('general-x4');
   const [scale, setScale] = useState(4);
+  const [targetRes, setTargetRes] = useState(null);
   const [useFace, setUseFace] = useState(false);
   const [faceModel, setFaceModel] = useState('codeformer');
   const [faceWeight, setFaceWeight] = useState(0.6);
@@ -227,6 +228,9 @@ export default function BatchStudio() {
     files.forEach((f) => formData.append('files', f));
     formData.append('model', model);
     formData.append('scale', scale);
+    if (targetRes) {
+      formData.append('target_res', targetRes);
+    }
     formData.append('face', useFace);
     formData.append('face_model', faceModel);
     formData.append('face_weight', faceWeight);
@@ -333,20 +337,88 @@ export default function BatchStudio() {
           </div>
         </div>
 
-        {/* Scale */}
+        {/* Scale & Target Resolution Preset */}
         <div className="control-group">
-          <label className="control-label">Faktor Perbesaran</label>
-          <div className="scale-buttons">
-            {[2, 3, 4, 8].map((s) => (
-              <button
-                key={s}
-                type="button"
-                className={`scale-btn ${scale === s ? 'active' : ''}`}
-                onClick={() => setScale(s)}
-              >
-                {s}x {s === 8 ? '🔥' : ''}
-              </button>
-            ))}
+          <label className="control-label">Faktor Perbesaran & Target Resolusi</label>
+
+          {/* Faktor Skala: 1x, 2x, 3x, 4x, 8x */}
+          <div style={{ marginBottom: '8px' }}>
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', marginBottom: '5px', fontWeight: 600 }}>
+              FAKTOR SKALA (MULTIPLIER)
+            </div>
+            <div className="scale-buttons" style={{ gridTemplateColumns: 'repeat(5, 1fr)', gap: '6px' }}>
+              {[
+                { s: 1, label: '1x', desc: 'Tetap' },
+                { s: 2, label: '2x', desc: 'Cepat' },
+                { s: 3, label: '3x', desc: 'Sedang' },
+                { s: 4, label: '4x', desc: 'Detail' },
+                { s: 8, label: '8x 🔥', desc: 'Ultra' },
+              ].map(({ s, label, desc }) => (
+                <button
+                  key={s}
+                  type="button"
+                  className={`scale-btn ${!targetRes && scale === s ? 'active' : ''}`}
+                  onClick={() => {
+                    setScale(s);
+                    setTargetRes(null);
+                  }}
+                  style={{ padding: '8px 4px', textAlign: 'center', minHeight: '48px' }}
+                >
+                  <div style={{ fontSize: '0.86rem', fontWeight: 700 }}>{label}</div>
+                  <div style={{ fontSize: '0.62rem', opacity: 0.75, fontWeight: 500, marginTop: '1px' }}>{desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Preset Resolusi Standar: 1080p, 1440p, 4K, 8K */}
+          <div>
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', marginBottom: '5px', fontWeight: 600 }}>
+              TARGET RESOLUSI STANDAR (PRESET)
+            </div>
+            <div className="scale-buttons" style={{ gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
+              {[
+                { id: '1080p', label: '1080p', sub: 'Full HD', spec: '1920×1080' },
+                { id: '1440p', label: '1440p', sub: '2K QHD', spec: '2560×1440' },
+                { id: '4k', label: '2160p', sub: '4K UHD', spec: '3840×2160' },
+                { id: '8k', label: '4320p', sub: '8K UHD', spec: '7680×4320' },
+              ].map((res) => (
+                <button
+                  key={res.id}
+                  type="button"
+                  className={`scale-btn ${targetRes === res.id ? 'active' : ''}`}
+                  onClick={() => {
+                    setTargetRes(res.id);
+                  }}
+                  style={{ padding: '8px 4px', textAlign: 'center', minHeight: '52px' }}
+                >
+                  <div style={{ fontSize: '0.84rem', fontWeight: 700 }}>{res.label}</div>
+                  <div style={{ fontSize: '0.66rem', color: targetRes === res.id ? '#fff' : 'var(--accent-primary)', fontWeight: 600, marginTop: '1px' }}>
+                    {res.sub}
+                  </div>
+                  <div style={{ fontSize: '0.58rem', opacity: 0.65, marginTop: '1px' }}>{res.spec}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Info pill */}
+          <div style={{
+            marginTop: '8px',
+            padding: '7px 10px',
+            borderRadius: '6px',
+            background: 'rgba(99, 102, 241, 0.08)',
+            border: '1px solid rgba(99, 102, 241, 0.22)',
+            fontSize: '0.74rem',
+            color: 'var(--text-muted)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}>
+            <span>📐 Target Batch:</span>
+            <span style={{ fontWeight: 700, color: '#fff' }}>
+              {targetRes ? `Preset ${targetRes.toUpperCase()} (Aspek Rasio Terjaga)` : `${scale === 1 ? '1x Tetap (Restorasi Saja)' : `${scale}x Perbesaran`}`}
+            </span>
           </div>
         </div>
 

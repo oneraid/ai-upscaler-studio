@@ -18,10 +18,12 @@ import ImageComparisonSlider from './ImageComparisonSlider';
 export default function PhotoStudio() {
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
+  const [imageMeta, setImageMeta] = useState(null);
 
   // Settings
   const [model, setModel] = useState('general-x4');
   const [scale, setScale] = useState(4);
+  const [targetRes, setTargetRes] = useState(null);
   const [useFace, setUseFace] = useState(false);
   const [faceModel, setFaceModel] = useState('codeformer');
   const [faceWeight, setFaceWeight] = useState(0.6);
@@ -59,9 +61,15 @@ export default function PhotoStudio() {
     }
     localStorage.removeItem('upscaler_active_photo_task');
     setFile(selected);
-    setPreviewUrl(URL.createObjectURL(selected));
+    const objUrl = URL.createObjectURL(selected);
+    setPreviewUrl(objUrl);
     setResult(null);
     setError(null);
+    const imgObj = new Image();
+    imgObj.onload = () => {
+      setImageMeta({ width: imgObj.naturalWidth, height: imgObj.naturalHeight });
+    };
+    imgObj.src = objUrl;
   };
 
   const handleFileChange = (e) => {
@@ -241,6 +249,9 @@ export default function PhotoStudio() {
     }
     formData.append('model', model);
     formData.append('scale', scale);
+    if (targetRes) {
+      formData.append('target_res', targetRes);
+    }
     formData.append('face', useFace);
     formData.append('face_model', faceModel);
     formData.append('face_weight', faceWeight);
@@ -364,20 +375,108 @@ export default function PhotoStudio() {
           </div>
         </div>
 
-        {/* Scale Buttons */}
+        {/* Scale & Target Resolution Selector */}
         <div className="control-group">
-          <label className="control-label">Faktor Perbesaran (Resolusi)</label>
-          <div className="scale-buttons">
-            {[2, 3, 4, 8].map((s) => (
-              <button
-                key={s}
-                type="button"
-                className={`scale-btn ${scale === s ? 'active' : ''}`}
-                onClick={() => setScale(s)}
-              >
-                {s}x {s === 8 ? '🔥' : ''}
-              </button>
-            ))}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <label className="control-label" style={{ marginBottom: 0 }}>Faktor Perbesaran & Target Resolusi</label>
+            <span style={{ fontSize: '0.73rem', color: 'var(--accent-primary)', fontWeight: 700 }}>
+              {targetRes ? `Target: ${targetRes.toUpperCase()}` : `${scale}x (${scale === 1 ? 'Tetap' : 'Perbesar'})`}
+            </span>
+          </div>
+
+          {/* Pengali Skala: 1x, 2x, 3x, 4x, 8x */}
+          <div style={{ marginBottom: '10px' }}>
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', marginBottom: '5px', fontWeight: 600 }}>
+              PENGALI RESOLUSI (SCALE FACTOR)
+            </div>
+            <div className="scale-buttons" style={{ gridTemplateColumns: 'repeat(5, 1fr)', gap: '6px' }}>
+              {[
+                { s: 1, label: '1x', desc: 'Tetap' },
+                { s: 2, label: '2x', desc: '2x Lipat' },
+                { s: 3, label: '3x', desc: '3x Lipat' },
+                { s: 4, label: '4x', desc: '4x Lipat' },
+                { s: 8, label: '8x 🔥', desc: 'Ultra-HD' },
+              ].map(({ s, label, desc }) => (
+                <button
+                  key={s}
+                  type="button"
+                  className={`scale-btn ${!targetRes && scale === s ? 'active' : ''}`}
+                  onClick={() => {
+                    setScale(s);
+                    setTargetRes(null);
+                  }}
+                  style={{ padding: '8px 4px', textAlign: 'center', minHeight: '48px' }}
+                >
+                  <div style={{ fontSize: '0.86rem', fontWeight: 700 }}>{label}</div>
+                  <div style={{ fontSize: '0.62rem', opacity: 0.75, fontWeight: 500, marginTop: '1px' }}>{desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Preset Resolusi Standar: 1080p, 1440p, 4K, 8K */}
+          <div>
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', marginBottom: '5px', fontWeight: 600 }}>
+              TARGET RESOLUSI STANDAR (PRESET)
+            </div>
+            <div className="scale-buttons" style={{ gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
+              {[
+                { id: '1080p', label: '1080p', sub: 'Full HD', spec: '1920×1080' },
+                { id: '1440p', label: '1440p', sub: '2K QHD', spec: '2560×1440' },
+                { id: '4k', label: '2160p', sub: '4K UHD', spec: '3840×2160' },
+                { id: '8k', label: '4320p', sub: '8K UHD', spec: '7680×4320' },
+              ].map((res) => (
+                <button
+                  key={res.id}
+                  type="button"
+                  className={`scale-btn ${targetRes === res.id ? 'active' : ''}`}
+                  onClick={() => {
+                    setTargetRes(res.id);
+                  }}
+                  style={{ padding: '8px 4px', textAlign: 'center', minHeight: '52px' }}
+                >
+                  <div style={{ fontSize: '0.84rem', fontWeight: 700 }}>{res.label}</div>
+                  <div style={{ fontSize: '0.66rem', color: targetRes === res.id ? '#fff' : 'var(--accent-primary)', fontWeight: 600, marginTop: '1px' }}>
+                    {res.sub}
+                  </div>
+                  <div style={{ fontSize: '0.58rem', opacity: 0.65, marginTop: '1px' }}>{res.spec}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Live Resolution Estimate Pill */}
+          <div style={{
+            marginTop: '8px',
+            padding: '7px 10px',
+            borderRadius: '6px',
+            background: 'rgba(99, 102, 241, 0.08)',
+            border: '1px solid rgba(99, 102, 241, 0.22)',
+            fontSize: '0.74rem',
+            color: 'var(--text-muted)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}>
+            <span>📐 Estimasi Dimensi Hasil:</span>
+            <span style={{ fontWeight: 700, color: '#fff' }}>
+              {imageMeta?.width && imageMeta?.height ? (
+                targetRes ? (() => {
+                  const resMap = { '1080p': 1080, '1440p': 1440, '4k': 2160, '8k': 4320 };
+                  const base = resMap[targetRes] || 1080;
+                  const w = imageMeta.width;
+                  const h = imageMeta.height;
+                  const tw = w >= h ? Math.round(w * (base / h)) : base;
+                  const th = w >= h ? base : Math.round(h * (base / w));
+                  const rat = (tw / w).toFixed(2);
+                  return `${tw} × ${th} (${targetRes.toUpperCase()} · ~${rat}x)`;
+                })() : (
+                  `${Math.round(imageMeta.width * scale)} × ${Math.round(imageMeta.height * scale)} (${scale === 1 ? '1x Tetap' : `${scale}x`})`
+                )
+              ) : (
+                targetRes ? `Preset ${targetRes.toUpperCase()} (Aspek Rasio Terjaga)` : `${scale}x Perbesaran`
+              )}
+            </span>
           </div>
         </div>
 

@@ -95,7 +95,7 @@ def is_video_file(path: Path) -> bool:
 def get_output_filepath(
     input_path: Path,
     output_dest: Path,
-    scale: int,
+    scale: Any,
     custom_ext: Optional[str] = None
 ) -> Path:
     """
@@ -115,4 +115,66 @@ def get_output_filepath(
         return out_file
 
     output_dest.mkdir(parents=True, exist_ok=True)
-    return output_dest / f"{stem}_x{scale}{target_ext}"
+    scale_label = f"{scale}".replace(".", "_")
+    return output_dest / f"{stem}_x{scale_label}{target_ext}"
+
+
+def resolve_target_dimensions(
+    orig_w: int,
+    orig_h: int,
+    scale: Optional[float] = None,
+    target_res: Optional[str] = None,
+    is_video: bool = False,
+) -> Tuple[int, int, float]:
+    """
+    Compute target width, target height, and effective scale factor.
+    target_res can be '1080p', '1440p', '2160p'/'4k', '4320p'/'8k', or None.
+    Preserves original aspect ratio without distortion.
+    If is_video is True, guarantees dimensions are even numbers for video codecs.
+    """
+    res_presets = {
+        "1080p": 1080,
+        "fhd": 1080,
+        "1440p": 1440,
+        "2k": 1440,
+        "qhd": 1440,
+        "2160p": 2160,
+        "4k": 2160,
+        "uhd": 2160,
+        "4320p": 4320,
+        "8k": 4320,
+    }
+
+    if target_res:
+        key = str(target_res).lower().strip()
+        if key in res_presets:
+            base_res = res_presets[key]
+            if orig_w >= orig_h:
+                target_h = base_res
+                target_w = int(round(orig_w * (base_res / float(orig_h))))
+            else:
+                target_w = base_res
+                target_h = int(round(orig_h * (base_res / float(orig_w))))
+            effective_scale = max(target_w / orig_w, target_h / orig_h)
+        else:
+            effective_scale = float(scale) if scale is not None else 2.0
+            target_w = int(round(orig_w * effective_scale))
+            target_h = int(round(orig_h * effective_scale))
+    elif scale is not None:
+        effective_scale = float(scale)
+        target_w = int(round(orig_w * effective_scale))
+        target_h = int(round(orig_h * effective_scale))
+    else:
+        effective_scale = 2.0
+        target_w = orig_w * 2
+        target_h = orig_h * 2
+
+    # Safety clamp: at least 16x16
+    target_w = max(16, target_w)
+    target_h = max(16, target_h)
+
+    if is_video:
+        target_w = target_w - (target_w % 2)
+        target_h = target_h - (target_h % 2)
+
+    return target_w, target_h, effective_scale

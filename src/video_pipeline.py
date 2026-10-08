@@ -36,13 +36,15 @@ from src.utils import (
     get_disk_free_bytes,
     format_bytes,
     get_output_filepath,
+    resolve_target_dimensions,
 )
 
 
 def process_video(
     video_path: Path,
     output_dest: Path,
-    scale: int = DEFAULT_SCALE,
+    scale: float = DEFAULT_SCALE,
+    target_res: Optional[str] = None,
     model_name: str = "general-fast",
     face: bool = False,
     face_model: str = DEFAULT_FACE_MODEL,
@@ -65,7 +67,7 @@ def process_video(
     Process a video file according to specifications:
     1. Probe metadata (FPS, resolution, duration, audio).
     2. Estimate disk space and warn if insufficient.
-    3. Check resolution exceeding 4K and warn.
+    3. Support 1x, 2x, 3x, 4x, or standard target resolution presets (1080p, 1440p, 4K, 8K).
     4. Extract frames into .work/<video_hash>/frames_in/.
     5. Enhance each frame with resume support and progress bar.
     6. Re-encode video with audio preservation.
@@ -73,7 +75,22 @@ def process_video(
     """
     ensure_ffmpeg()
 
-    out_path = get_output_filepath(video_path, output_dest, scale, custom_ext=".mp4")
+    info = probe_video(video_path)
+    orig_w, orig_h = info["width"], info["height"]
+    fps_rational = info["fps_rational"]
+    has_audio = info["has_audio"]
+    frame_count = info["frame_count"]
+
+    target_w, target_h, effective_scale = resolve_target_dimensions(
+        orig_w=orig_w,
+        orig_h=orig_h,
+        scale=scale,
+        target_res=target_res,
+        is_video=True,
+    )
+
+    scale_label = target_res if target_res else (int(scale) if float(scale).is_integer() else scale)
+    out_path = get_output_filepath(video_path, output_dest, scale_label, custom_ext=".mp4")
     if out_path.exists() and not overwrite:
         logger.info(f"File output video sudah ada, lewati: {out_path.name}")
         if progress_callback:
@@ -84,16 +101,8 @@ def process_video(
         progress_callback(2, "Menganalisis metadata video...")
 
     logger.info(f"Memulai pipeline video untuk: {video_path.name}")
-    info = probe_video(video_path)
-    orig_w, orig_h = info["width"], info["height"]
-    fps_rational = info["fps_rational"]
-    has_audio = info["has_audio"]
-    frame_count = info["frame_count"]
-
-    target_w = orig_w * scale
-    target_h = orig_h * scale
     logger.info(
-        f"Resolusi asli: {orig_w}x{orig_h} -> Target: {target_w}x{target_h} ({scale}x) | FPS: {fps_rational}"
+        f"Resolusi asli: {orig_w}x{orig_h} -> Target: {target_w}x{target_h} ({effective_scale:.2f}x | {scale_label}) | FPS: {fps_rational}"
     )
 
     # 4K resolution check
@@ -171,7 +180,7 @@ def process_video(
 
     if face and face_enhancer is None:
         face_enhancer = model_manager.get_face_enhancer(
-            target_scale=scale,
+            target_scale=min(max(int(round(effective_scale)), 1), 4),
             face_model=face_model,
             bg_upsampler=upsampler
         )
@@ -209,13 +218,15 @@ def process_video(
                     enhanced = enhance_with_oom_recovery(_run_face, upsampler)
                 else:
                     def _run_upscale():
-                        output, _ = upsampler.enhance(frame_img, outscale=scale)
+                        model_outscale = min(max(int(round(effective_scale)), 1), 4)
+                        output, _ = upsampler.enhance(frame_img, outscale=model_outscale)
                         return output
                     enhanced = enhance_with_oom_recovery(_run_upscale, upsampler)
 
                 # Resize if needed
                 if (enhanced.shape[1], enhanced.shape[0]) != (target_w, target_h):
-                    enhanced = cv2.resize(enhanced, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
+                    interp = cv2.INTER_AREA if (target_w < enhanced.shape[1] or target_h < enhanced.shape[0]) else cv2.INTER_LANCZOS4
+                    enhanced = cv2.resize(enhanced, (target_w, target_h), interpolation=interp)
 
                 # Save enhanced frame
                 success, encoded = cv2.imencode(".png", enhanced, [cv2.IMWRITE_PNG_COMPRESSION, 3])

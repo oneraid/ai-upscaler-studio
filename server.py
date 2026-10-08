@@ -172,7 +172,8 @@ def _photo_worker(
     task_id: str,
     input_path: Path,
     model: str,
-    scale: int,
+    scale: float,
+    target_res: Optional[str],
     face: bool,
     face_model: str,
     face_weight: float,
@@ -191,7 +192,8 @@ def _photo_worker(
         result_path = process_image(
             input_path=input_path,
             output_dest=PHOTO_OUTPUT_DIR,
-            scale=int(scale),
+            scale=float(scale),
+            target_res=target_res,
             model_name=model,
             face=bool(face),
             face_model=face_model,
@@ -221,7 +223,7 @@ def _photo_worker(
             "orig_h": orig_h,
             "new_w": new_w,
             "new_h": new_h,
-            "scale": scale,
+            "scale": target_res if target_res else scale,
             "elapsed": round(elapsed, 2),
             "size_formatted": format_bytes(out_size_bytes),
             "filename": result_path.name,
@@ -239,7 +241,8 @@ def _video_worker(
     task_id: str,
     input_path: Path,
     model: str,
-    scale: int,
+    scale: float,
+    target_res: Optional[str],
     face: bool,
     face_model: str,
     face_weight: float,
@@ -258,7 +261,8 @@ def _video_worker(
         result_path = process_video(
             video_path=input_path,
             output_dest=VIDEO_OUTPUT_DIR,
-            scale=int(scale),
+            scale=float(scale),
+            target_res=target_res,
             model_name=model,
             face=bool(face),
             face_model=face_model,
@@ -303,7 +307,8 @@ def _batch_worker(
     task_id: str,
     temp_files: List[Any],
     model: str,
-    scale: int,
+    scale: float,
+    target_res: Optional[str],
     face: bool,
     face_model: str,
     face_weight: float,
@@ -333,7 +338,8 @@ def _batch_worker(
                 res_path = process_image(
                     input_path=temp_in,
                     output_dest=PHOTO_OUTPUT_DIR,
-                    scale=int(scale),
+                    scale=float(scale),
+                    target_res=target_res,
                     model_name=model,
                     face=bool(face),
                     face_model=face_model,
@@ -386,7 +392,8 @@ def _batch_worker(
 async def enhance_photo_api(
     image: UploadFile = File(...),
     model: str = Form("general-x4"),
-    scale: int = Form(4),
+    scale: float = Form(4.0),
+    target_res: Optional[str] = Form(None),
     face: bool = Form(False),
     face_model: str = Form(DEFAULT_FACE_MODEL),
     face_weight: float = Form(DEFAULT_FACE_WEIGHT),
@@ -414,7 +421,7 @@ async def enhance_photo_api(
         filename=image.filename or "",
         preview_url=f"/api/file/input/{temp_input_name}",
         model=model,
-        scale=scale,
+        scale=target_res if target_res else scale,
     )
     threading.Thread(
         target=_photo_worker,
@@ -423,6 +430,7 @@ async def enhance_photo_api(
             input_path,
             model,
             scale,
+            target_res,
             face,
             face_model,
             face_weight,
@@ -443,7 +451,8 @@ async def enhance_photo_api(
 async def enhance_video_api(
     video: UploadFile = File(...),
     model: str = Form("general-fast"),
-    scale: int = Form(2),
+    scale: float = Form(2.0),
+    target_res: Optional[str] = Form(None),
     face: bool = Form(False),
     face_model: str = Form(DEFAULT_FACE_MODEL),
     face_weight: float = Form(DEFAULT_FACE_WEIGHT),
@@ -473,7 +482,7 @@ async def enhance_video_api(
         filename=video.filename or "",
         preview_url=f"/api/file/input/{temp_input_name}",
         model=model,
-        scale=scale,
+        scale=target_res if target_res else scale,
     )
     threading.Thread(
         target=_video_worker,
@@ -482,6 +491,7 @@ async def enhance_video_api(
             input_path,
             model,
             scale,
+            target_res,
             face,
             face_model,
             face_weight,
@@ -502,7 +512,8 @@ async def enhance_video_api(
 async def enhance_batch_api(
     files: List[UploadFile] = File(...),
     model: str = Form("general-x4"),
-    scale: int = Form(4),
+    scale: float = Form(4.0),
+    target_res: Optional[str] = Form(None),
     face: bool = Form(False),
     face_model: str = Form(DEFAULT_FACE_MODEL),
     face_weight: float = Form(DEFAULT_FACE_WEIGHT),
@@ -526,11 +537,11 @@ async def enhance_batch_api(
         filename=f"{len(temp_files)} foto",
         preview_url="",
         model=model,
-        scale=scale,
+        scale=target_res if target_res else scale,
     )
     threading.Thread(
         target=_batch_worker,
-        args=(task_id, temp_files, model, scale, face, face_model, face_weight, clarity, tile, format),
+        args=(task_id, temp_files, model, scale, target_res, face, face_model, face_weight, clarity, tile, format),
         daemon=True,
     ).start()
 
