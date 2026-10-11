@@ -36,7 +36,7 @@ from src.config import (
 )
 from src.image_pipeline import process_image
 from src.video_pipeline import process_video
-from src.ffmpeg_utils import probe_video
+from src.ffmpeg_utils import probe_video, crop_and_trim_video
 from src.utils import logger, get_disk_free_bytes, format_bytes
 
 # Siapkan direktori kerja
@@ -303,6 +303,80 @@ def _video_worker(
         fail_task(task_id, str(e))
 
 
+def _crop_worker(
+    task_id: str,
+    input_path: Path,
+    start_sec: float,
+    end_sec: float,
+    crop_x: Optional[int],
+    crop_y: Optional[int],
+    crop_w: Optional[int],
+    crop_h: Optional[int],
+    ratio_name: str,
+    is_trim: bool,
+    is_crop_ratio: bool,
+    orig_w: int,
+    orig_h: int,
+    orig_duration: float,
+):
+    start_time = time.time()
+    try:
+        def _prog(pct, msg):
+            update_task(task_id, pct, msg)
+
+        clean_stem = Path(input_path.stem).name
+        out_filename = f"{clean_stem}_crop_{int(time.time())}.mp4"
+        out_path = VIDEO_OUTPUT_DIR / out_filename
+
+        actual_start = float(start_sec) if is_trim else None
+        actual_end = float(end_sec) if is_trim and end_sec > 0 else None
+
+        actual_crop_x = int(crop_x) if (is_crop_ratio and crop_x is not None) else None
+        actual_crop_y = int(crop_y) if (is_crop_ratio and crop_y is not None) else None
+        actual_crop_w = int(crop_w) if (is_crop_ratio and crop_w is not None) else None
+        actual_crop_h = int(crop_h) if (is_crop_ratio and crop_h is not None) else None
+
+        crop_and_trim_video(
+            input_path=input_path,
+            output_path=out_path,
+            start_sec=actual_start,
+            end_sec=actual_end,
+            crop_x=actual_crop_x,
+            crop_y=actual_crop_y,
+            crop_w=actual_crop_w,
+            crop_h=actual_crop_h,
+            progress_callback=_prog,
+        )
+
+        elapsed = time.time() - start_time
+        out_meta = probe_video(out_path)
+        fps_val = out_meta.get("fps_float") or out_meta.get("fps") or 30.0
+        out_size_bytes = out_path.stat().st_size
+
+        res = {
+            "success": True,
+            "video_url": f"/api/file/output/video/{out_path.name}",
+            "orig_w": orig_w,
+            "orig_h": orig_h,
+            "orig_duration": round(orig_duration, 2),
+            "new_w": out_meta.get("width", orig_w),
+            "new_h": out_meta.get("height", orig_h),
+            "new_duration": round(out_meta.get("duration", 0.0), 2),
+            "fps": round(fps_val, 2),
+            "ratio_name": ratio_name,
+            "elapsed": round(elapsed, 1),
+            "size_formatted": format_bytes(out_size_bytes),
+            "filename": out_path.name,
+            "absolute_path": str(out_path.resolve()),
+            "folder_path": str(VIDEO_OUTPUT_DIR.resolve()),
+            "media_type": "video",
+        }
+        complete_task(task_id, res)
+    except Exception as e:
+        logger.error(f"Gagal memotong video: {e}", exc_info=True)
+        fail_task(task_id, str(e))
+
+
 def _batch_worker(
     task_id: str,
     temp_files: List[Any],
@@ -501,6 +575,64 @@ async def enhance_video_api(
             orig_w,
             orig_h,
             target_fps,
+        ),
+        daemon=True,
+    ).start()
+
+    return {"task_id": task_id, "status": "processing"}
+
+
+@app.post("/api/crop/video")
+async def crop_video_api(
+    video: UploadFile = File(...),
+    start_sec: float = Form(0.0),
+    end_sec: float = Form(0.0),
+    is_trim: bool = Form(False),
+    is_crop_ratio: bool = Form(False),
+    crop_x: Optional[int] = Form(None),
+    crop_y: Optional[int] = Form(None),
+    crop_w: Optional[int] = Form(None),
+    crop_h: Optional[int] = Form(None),
+    ratio_name: str = Form("original"),
+):
+    """Menerima unggahan video untuk dipotong durasinya dan/atau aspek rasionya."""
+    file_ext = Path(video.filename).suffix or ".mp4"
+    temp_input_name = f"crop_in_{int(time.time() * 1000)}{file_ext}"
+    input_path = UPLOADS_DIR / temp_input_name
+
+    with open(input_path, "wb") as f:
+        shutil.copyfileobj(video.file, f)
+
+    meta = probe_video(input_path)
+    orig_w = meta.get("width", 0)
+    orig_h = meta.get("height", 0)
+    orig_duration = float(meta.get("duration", 0.0))
+
+    task_id = create_task(
+        media_type="crop_video",
+        filename=video.filename or "",
+        preview_url=f"/api/file/input/{temp_input_name}",
+        model=f"Crop ({ratio_name})",
+        scale=1,
+    )
+
+    threading.Thread(
+        target=_crop_worker,
+        args=(
+            task_id,
+            input_path,
+            start_sec,
+            end_sec,
+            crop_x,
+            crop_y,
+            crop_w,
+            crop_h,
+            ratio_name,
+            is_trim,
+            is_crop_ratio,
+            orig_w,
+            orig_h,
+            orig_duration,
         ),
         daemon=True,
     ).start()

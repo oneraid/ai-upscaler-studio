@@ -13,6 +13,7 @@ from src.ffmpeg_utils import (
     check_ffmpeg_installed,
     probe_video,
     detect_nvenc,
+    crop_and_trim_video,
 )
 from src.utils import format_bytes, get_disk_free_bytes
 
@@ -40,6 +41,32 @@ def test_probe_sample_video():
     assert info["duration"] > 0
     assert info["has_audio"] is True
     assert info["fps_float"] > 0
+
+
+def test_crop_and_trim_video(tmp_path):
+    video_path = PROJECT_ROOT / "input" / "sample_video.mp4"
+    if not video_path.exists():
+        pytest.skip("input/sample_video.mp4 does not exist")
+
+    out_path = tmp_path / "crop_test.mp4"
+    # Crop duration to 1 second, and spatial crop to 360x360 (1:1 square)
+    res = crop_and_trim_video(
+        input_path=video_path,
+        output_path=out_path,
+        start_sec=0.0,
+        end_sec=1.0,
+        crop_x=140,
+        crop_y=0,
+        crop_w=360,
+        crop_h=360,
+    )
+    assert res.exists()
+    assert res.stat().st_size > 0
+
+    meta = probe_video(res)
+    assert meta["width"] == 360
+    assert meta["height"] == 360
+    assert meta["duration"] > 0.5
 
 
 def test_disk_utilities():

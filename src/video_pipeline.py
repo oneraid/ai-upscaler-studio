@@ -62,6 +62,7 @@ def process_video(
     face_enhancer: Optional[Any] = None,
     progress_callback: Optional[Callable[[int, str], None]] = None,
     target_fps: int = 0,
+    anti_flicker: bool = True,
 ) -> Path:
     """
     Process a video file according to specifications:
@@ -269,6 +270,7 @@ def process_video(
         start=start,
         end=end,
         target_fps=final_target_fps if final_target_fps > 0 else None,
+        anti_flicker=anti_flicker,
     )
 
     logger.info(f"Video upscaling selesai: {out_path}")

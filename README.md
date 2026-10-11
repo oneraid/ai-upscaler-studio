@@ -5,7 +5,7 @@
 **AI Photo & Video Upscaler Studio** adalah aplikasi berbasis kecerdasan buatan (AI) untuk meningkatkan resolusi dan kualitas **foto** serta **video** (super-resolution 2x/3x/4x, deblur, denoise, dan restorasi detail wajah) yang berjalan **100% lokal, gratis, dan privat** langsung di komputer Anda tanpa memerlukan koneksi internet, tanpa API berbayar, dan tanpa mengunggah data ke server luar.
 
 Proyek ini menyediakan dua mode antarmuka:
-- 🌟 **Modern Web Studio**: Antarmuka grafis modern berbasis **React 19**, **Vite**, dan **FastAPI** dengan tema *Dark Glassmorphism*, slider pembanding *Before/After* interaktif, pemutar video hasil, dan mode pemrosesan batch.
+- 🌟 **Modern Web Studio**: Antarmuka grafis modern berbasis **React 19**, **Vite**, dan **FastAPI** dengan tema *Dark Glassmorphism*, slider pembanding *Before/After* interaktif, studio pemotong video (durasi & rasio), pemutar video hasil, dan mode pemrosesan batch.
 - 💻 **Command-Line Interface (CLI)**: Antarmuka terminal via skrip `enhance.py` untuk pemrosesan cepat maupun otomasi skrip.
 
 ---
@@ -22,21 +22,38 @@ Proyek ini menyediakan dua mode antarmuka:
 
 ---
 
+## Model AI & Teknologi yang Digunakan
+
+| Kategori | Model / Arsitektur | Fungsi Utama |
+|---|---|---|
+| **Foto (Super-Resolution)** | **Real-ESRGAN** (`realesr-general-x4v3`, `RealESRGAN_x4plus`, `anime_6B`) | Perbesaran resolusi 2x, 3x, 4x, restorasi tekstur, deblur, dan denoise |
+| **Wajah (Face Restoration)** | **CodeFormer** & **GFPGAN v1.4** | Restorasi mata, rambut, bibir, dan tekstur kulit pada foto/video potret |
+| **Video Upscale** | **Real-ESRGAN Compact** (`realesr-general-x4v3`) + **NVENC** | Upscaling frame-by-frame berkecepatan tinggi dengan temporal flicker minimal |
+| **Motion Interpolation** | **FFmpeg Minterpolate (MCI / Blend)** | Menaikkan frame rate video ke **60 FPS** atau **2x FPS** (Ultra Mulus) |
+| **Video Cropper** | **FFmpeg Spatial Filter + NVENC Stream Engine** | Pemotongan durasi waktu (trim) dan aspek rasio (16:9, 9:16, 1:1, dll) |
+
+---
+
 ## Fitur Utama
 
-- 🎨 **Modern React Studio**:
-  - **Interactive Before/After Slider**: Geser pembatas visual secara interaktif untuk membandingkan kualitas foto sebelum vs sesudah diproses AI (tersedia mode slider dan mode berdampingan).
-  - **Live GPU & Hardware Monitor**: Menampilkan tipe GPU NVIDIA, kapasitas VRAM, serta sisa ruang penyimpanan disk secara realtime.
-  - **Pemutar Video Terintegrasi**: Memutar hasil video upscale langsung di browser dengan audio asli yang tetap tersinkronisasi.
-  - **Fitur Trim Test**: Kemampuan menguji sampel beberapa detik pertama video sebelum merender video panjang penuh.
-  - **Batch Processing**: Unggah banyak foto sekaligus, proses berurutan, dan unduh seluruh hasil dalam **1 file ZIP**.
-- 🔍 **Super-Resolution Foto Presisi Tinggi**: Perbesaran 2x, 3x, dan 4x menggunakan model mutakhir **Real-ESRGAN** (`RRDBNet` & `SRVGGNetCompact`).
-- 🎭 **Face Restoration (GFPGAN v1.4)**: Mengembalikan ketajaman mata, bibir, alis, dan tekstur kulit pada foto atau video potret yang buram/berpiksel.
-- 🛡️ **Dukungan Channel Alpha**: Menjaga transparansi pada gambar berformat PNG secara utuh.
-- 📐 **Koreksi Rotasi Otomatis (EXIF)**: Membaca metadata orientasi kamera ponsel dan mengoreksi rotasi foto secara otomatis.
+- 🎨 **Modern React Studio (Navigasi Sidebar Modular)**:
+  - 🖼️ **Image Upscale (Single & Batch Terpadu)**:
+    - Unggah **1 foto** atau **banyak foto sekaligus** dalam satu area drop zone yang sama.
+    - Untuk 1 foto: slider interaktif Before/After langsung aktif dengan zoom dan navigasi detail.
+    - Untuk banyak foto (Batch): antrean pemrosesan otomatis, galeri visual tiap foto dengan status real-time, inspeksi perbandingan Before/After langsung dari item batch, dan tombol unduh seluruh hasil dalam **1 arsip ZIP**.
+    - Opsi kustomisasi lengkap: pilihan format (PNG, JPG, WEBP), resolusi target (1080p, 2K, 4K, 8K), dan pengatur kejernihan/wajah.
+  - 📹 **Video Upscale**: Peningkatan video frame-by-frame dengan akselerasi NVIDIA NVENC, restorasi wajah video per frame, opsi target FPS (60 FPS / 2x FPS), temporal anti-flicker filter, dan fitur uji coba beberapa detik.
+  - ✂️ **Crop Video Studio**:
+    - **Crop Durasi Waktu (Trim):** Input durasi waktu fleksibel (misal `02:21 - 02:40`), tombol sinkronisasi playhead video (*"Ambil Playhead"*), dual range scrubber, serta tombol putar cuplikan.
+    - **Crop Aspek Rasio Spasial:** Pilihan rasio instan `16:9` (YouTube/PC), `9:16` (TikTok/Reels/Shorts), `1:1` (Instagram Feed), `4:5` (Potret IG), `4:3`, `21:9`, dan `Bebas/Custom`.
+    - **Interactive Visual Crop Box:** Kotak potong visual dengan garis bantu *Rule of Thirds* yang dapat **digeser langsung (*drag & drop*)** di atas video player.
+    - **Alur Kerja Terintegrasi:** Tombol instan *"🚀 Kirim ke Tab Video Upscale"* untuk langsung memperbesar video hasil crop tanpa perlu upload ulang.
+- 🎭 **Restorasi Wajah Ganda (CodeFormer & GFPGAN)**: Pilihan antara ketajaman ultra detail (CodeFormer) atau kehalusan natural (GFPGAN) dengan pengaturan intensitas bobot wajah.
+- 📐 **Presets Resolusi Cerdas**: Pilihan skala langsung (1x, 2x, 3x, 4x) atau preset standar industri (1080p FHD, 1440p 2K, 4K UHD, 8K UHD) dengan rasio aspek yang selalu terjaga.
 - ⚡ **Akselerasi Hardware NVIDIA NVENC**: Encoding video hingga 3–5x lebih cepat langsung memanfaatkan chip hardware GPU RTX Anda.
 - 🔁 **Resume Video Otomatis**: Jika proses render video terhenti, program akan otomatis melanjutkan dari frame terakhir tanpa mengulang dari awal.
-- 🛡️ **Automatic OOM Recovery**: Jika VRAM penuh saat memproses gambar raksasa, sistem otomatis mengosongkan cache CUDA dan membagi pemrosesan ke ukuran tile yang lebih kecil (`400 -> 256 -> 128 -> 64`).
+- 🛡️ **Automatic OOM Recovery**: Jika VRAM penuh saat memproses gambar resolusi tinggi, sistem otomatis membagi pemrosesan ke ukuran tile yang lebih kecil (`400 -> 256 -> 128 -> 64`).
+- 📁 **Akses Desktop Windows Terpadu**: Tombol langsung untuk *"Buka Folder di File Explorer"*, *"Buka File Langsung"*, dan *"Salin Path"*.
 
 ---
 
@@ -135,6 +152,7 @@ python enhance.py input\ -o output\ --scale 4
 
 Proyek ini dibangun menggunakan model dan pustaka open-source:
 - [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) oleh Xintao Wang dkk. (BSD 3-Clause License)
+- [CodeFormer](https://github.com/sczhou/CodeFormer) oleh Shangchen Zhou dkk. (S-Lab / NTU)
 - [GFPGAN](https://github.com/TencentARC/GFPGAN) oleh Tencent ARC Lab (Apache 2.0 License)
 - [BasicSR](https://github.com/XPixelGroup/BasicSR) oleh XPixelGroup (Apache 2.0 License)
 - [FastAPI](https://fastapi.tiangolo.com/) oleh Sebastián Ramírez (MIT License)

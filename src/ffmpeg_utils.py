@@ -7,7 +7,7 @@ import shutil
 import subprocess
 from fractions import Fraction
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, Tuple, List, Callable
 
 from src.utils import logger
 
@@ -186,10 +186,11 @@ def encode_video_from_frames(
     start: Optional[float] = None,
     end: Optional[float] = None,
     target_fps: Optional[int] = None,
+    anti_flicker: bool = True,
 ) -> None:
     """
     Encode upscaled frames into an MP4 video, merging audio from audio_source if available.
-    Supports motion-compensated / blended frame rate interpolation if target_fps is provided.
+    Supports temporal anti-flicker filtering and motion interpolation.
     """
     ensure_ffmpeg()
     output_video_path.parent.mkdir(parents=True, exist_ok=True)
@@ -244,13 +245,21 @@ def encode_video_from_frames(
                 cmd.extend(["-to", str(end)])
             cmd.extend(["-i", str(audio_source.resolve())])
 
-        # Motion Interpolation (Up FPS)
+        # Filter Chain: Temporal Anti-Flicker & Motion Interpolation
+        vf_filters: List[str] = []
+        if anti_flicker:
+            # Subtle temporal denoise stabilizes frame-to-frame GAN flickering
+            vf_filters.append("hqdn3d=1.5:1.5:3.0:3.0")
+
         if include_interpolation and target_fps and target_fps > 0:
             if is_ultra_res or frame_w > 1920:
-                vf_expr = f"minterpolate=fps={target_fps}:mi_mode=blend"
+                vf_filters.append(f"minterpolate=fps={target_fps}:mi_mode=blend")
             else:
-                vf_expr = f"minterpolate=fps={target_fps}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1"
-            cmd.extend(["-vf", vf_expr, "-r", str(target_fps)])
+                vf_filters.append(f"minterpolate=fps={target_fps}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1")
+            cmd.extend(["-r", str(target_fps)])
+
+        if vf_filters:
+            cmd.extend(["-vf", ",".join(vf_filters)])
 
         # Video encoding settings
         if "nvenc" in use_codec:
@@ -306,3 +315,131 @@ def encode_video_from_frames(
                 raise RuntimeError(f"Gagal melakukan encode video dengan libx264: {res_fb.stderr}")
         else:
             raise RuntimeError(f"Gagal melakukan encode video: {res.stderr}")
+
+
+def crop_and_trim_video(
+    input_path: Path,
+    output_path: Path,
+    start_sec: Optional[float] = None,
+    end_sec: Optional[float] = None,
+    crop_x: Optional[int] = None,
+    crop_y: Optional[int] = None,
+    crop_w: Optional[int] = None,
+    crop_h: Optional[int] = None,
+    crf: int = 18,
+    progress_callback: Optional[Callable[[int, str], None]] = None,
+) -> Path:
+    """
+    Crop video spatially (aspect ratio / custom crop box) and/or trim duration.
+    Uses NVENC hardware acceleration if available with automatic libx264 fallback.
+    """
+    ensure_ffmpeg()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    meta = probe_video(input_path)
+    orig_w = meta["width"]
+    orig_h = meta["height"]
+    total_duration = float(meta.get("duration", 0.0))
+    has_audio = meta.get("has_audio", False)
+
+    # 1. Normalize start and end timestamps
+    s = float(start_sec) if start_sec is not None and start_sec > 0 else 0.0
+    if end_sec is not None and end_sec > 0:
+        e = float(end_sec)
+        if total_duration > 0 and e > total_duration:
+            e = total_duration
+    else:
+        e = total_duration if total_duration > 0 else 0.0
+
+    if e > 0 and e < s:
+        s, e = e, s
+
+    clip_duration = max(0.1, (e - s) if e > s else (total_duration if total_duration > 0 else 10.0))
+
+    # 2. Build spatial crop filter
+    vf_filters = []
+    if crop_w is not None and crop_h is not None and crop_w > 0 and crop_h > 0:
+        cw = min(orig_w, int(crop_w))
+        ch = min(orig_h, int(crop_h))
+        # Ensure even width and height for YUV420p video codecs
+        cw = cw - (cw % 2)
+        ch = ch - (ch % 2)
+        cx = max(0, min(orig_w - cw, int(crop_x or 0)))
+        cy = max(0, min(orig_h - ch, int(crop_y or 0)))
+        cx = cx - (cx % 2)
+        cy = cy - (cy % 2)
+
+        if cw > 0 and ch > 0:
+            vf_filters.append(f"crop={cw}:{ch}:{cx}:{cy}")
+
+    nvenc_supported = detect_nvenc()
+
+    def build_cmd(use_nvenc: bool) -> List[str]:
+        cmd: List[str] = ["ffmpeg", "-y"]
+
+        # Accurate trimming: using -ss before input for fast seek and -to for end time
+        if s > 0:
+            cmd.extend(["-ss", f"{s:.3f}"])
+        if e > 0 and e > s:
+            cmd.extend(["-to", f"{e:.3f}"])
+
+        cmd.extend(["-i", str(input_path.resolve())])
+
+        if vf_filters:
+            cmd.extend(["-vf", ",".join(vf_filters)])
+
+        if use_nvenc:
+            cmd.extend([
+                "-c:v", "h264_nvenc",
+                "-preset", "p5",
+                "-cq", str(crf),
+                "-pix_fmt", "yuv420p",
+            ])
+        else:
+            cmd.extend([
+                "-c:v", "libx264",
+                "-preset", "fast",
+                "-crf", str(crf),
+                "-pix_fmt", "yuv420p",
+            ])
+
+        if has_audio:
+            cmd.extend(["-c:a", "aac", "-b:a", "192k"])
+        else:
+            cmd.extend(["-an"])
+
+        cmd.extend(["-movflags", "+faststart"])
+        cmd.append(str(output_path.resolve()))
+        return cmd
+
+    if progress_callback:
+        progress_callback(10, "Memulai pemotongan video...")
+
+    primary_cmd = build_cmd(nvenc_supported)
+    logger.info(f"Running ffmpeg crop: {' '.join(primary_cmd)}")
+
+    try:
+        if progress_callback:
+            progress_callback(30, "Memproses pemotongan dengan encoder...")
+
+        res = subprocess.run(primary_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if res.returncode != 0:
+            raise RuntimeError(f"FFmpeg error: {res.stderr}")
+
+    except Exception as e:
+        if nvenc_supported:
+            logger.warning(f"NVENC crop gagal ({e}), beralih ke software CPU libx264...")
+            if progress_callback:
+                progress_callback(50, "Beralih ke CPU rendering...")
+            fallback_cmd = build_cmd(False)
+            res_fb = subprocess.run(fallback_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if res_fb.returncode != 0:
+                raise RuntimeError(f"Gagal memotong video: {res_fb.stderr}")
+        else:
+            raise RuntimeError(f"Gagal memotong video: {e}")
+
+    if progress_callback:
+        progress_callback(100, "Selesai memotong video!")
+
+    return output_path
+

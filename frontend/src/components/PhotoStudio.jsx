@@ -12,11 +12,19 @@ import {
   Copy,
   Check,
   Folder,
+  Layers,
+  Image as ImageIcon,
+  Plus,
+  Trash2,
+  CheckCircle,
+  ArrowLeft,
+  Eye,
 } from 'lucide-react';
 import ImageComparisonSlider from './ImageComparisonSlider';
 
 export default function PhotoStudio() {
-  const [file, setFile] = useState(null);
+  // File states: supports single or multiple files
+  const [files, setFiles] = useState([]);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [imageMeta, setImageMeta] = useState(null);
 
@@ -26,7 +34,7 @@ export default function PhotoStudio() {
   const [targetRes, setTargetRes] = useState(null);
   const [useFace, setUseFace] = useState(false);
   const [faceModel, setFaceModel] = useState('codeformer');
-  const [faceWeight, setFaceWeight] = useState(0.6);
+  const [faceWeight, setFaceWeight] = useState(0.45);
   const [clarity, setClarity] = useState(20);
   const [tile, setTile] = useState(400);
   const [format, setFormat] = useState('png');
@@ -37,11 +45,16 @@ export default function PhotoStudio() {
   const [progress, setProgress] = useState(0);
   const [progressMsg, setProgressMsg] = useState('');
   const [copied, setCopied] = useState(false);
-  const [result, setResult] = useState(null);
+
+  // Results: single result or batch result
+  const [singleResult, setSingleResult] = useState(null);
+  const [batchResult, setBatchResult] = useState(null);
+  const [activeCompareItem, setActiveCompareItem] = useState(null);
   const [error, setError] = useState(null);
 
   const [isDragging, setIsDragging] = useState(false);
   const pollTimerRef = useRef(null);
+  const appendInputRef = useRef(null);
 
   const isValidImage = (f) => {
     if (!f) return false;
@@ -49,33 +62,85 @@ export default function PhotoStudio() {
     return /\.(jpe?g|png|webp|bmp|tiff?|gif|avif)$/i.test(f.name || '');
   };
 
-  const processImageFile = (selected) => {
-    if (!selected) return;
-    if (!isValidImage(selected)) {
+  // Helper to handle newly selected files (either replacing or appending)
+  const addFiles = (selectedFiles, append = false) => {
+    if (!selectedFiles || selectedFiles.length === 0) return;
+    const arrayFiles = Array.from(selectedFiles);
+    const validImages = arrayFiles.filter(isValidImage);
+
+    if (validImages.length === 0) {
       setError('Format file tidak didukung. Harap pilih gambar JPG, PNG, atau WEBP.');
       return;
     }
+
     if (pollTimerRef.current) {
       clearInterval(pollTimerRef.current);
       pollTimerRef.current = null;
     }
     localStorage.removeItem('upscaler_active_photo_task');
-    setFile(selected);
-    const objUrl = URL.createObjectURL(selected);
-    setPreviewUrl(objUrl);
-    setResult(null);
+    localStorage.removeItem('upscaler_active_batch_task');
+
+    let newFilesList;
+    if (append) {
+      newFilesList = [...files, ...validImages];
+    } else {
+      newFilesList = validImages;
+    }
+
+    setFiles(newFilesList);
+    setSingleResult(null);
+    setBatchResult(null);
+    setActiveCompareItem(null);
     setError(null);
-    const imgObj = new Image();
-    imgObj.onload = () => {
-      setImageMeta({ width: imgObj.naturalWidth, height: imgObj.naturalHeight });
-    };
-    imgObj.src = objUrl;
+
+    // If only 1 file is present, prepare single-image preview & metadata
+    if (newFilesList.length === 1) {
+      const objUrl = URL.createObjectURL(newFilesList[0]);
+      setPreviewUrl(objUrl);
+      const imgObj = new Image();
+      imgObj.onload = () => {
+        setImageMeta({ width: imgObj.naturalWidth, height: imgObj.naturalHeight });
+      };
+      imgObj.src = objUrl;
+    } else {
+      setPreviewUrl(null);
+      setImageMeta(null);
+    }
   };
 
-  const handleFileChange = (e) => {
-    const selected = e.target.files && e.target.files[0];
-    if (selected) {
-      processImageFile(selected);
+  const removeFileAtIndex = (indexToRemove) => {
+    const updated = files.filter((_, idx) => idx !== indexToRemove);
+    setFiles(updated);
+    if (updated.length === 1) {
+      const objUrl = URL.createObjectURL(updated[0]);
+      setPreviewUrl(objUrl);
+      const imgObj = new Image();
+      imgObj.onload = () => {
+        setImageMeta({ width: imgObj.naturalWidth, height: imgObj.naturalHeight });
+      };
+      imgObj.src = objUrl;
+    } else if (updated.length === 0) {
+      setPreviewUrl(null);
+      setImageMeta(null);
+      setSingleResult(null);
+      setBatchResult(null);
+    }
+  };
+
+  const clearAllFiles = () => {
+    setFiles([]);
+    setPreviewUrl(null);
+    setImageMeta(null);
+    setSingleResult(null);
+    setBatchResult(null);
+    setActiveCompareItem(null);
+    setError(null);
+  };
+
+  const handleFileChange = (e, append = false) => {
+    if (e.target.files && e.target.files.length > 0) {
+      addFiles(e.target.files, append);
+      e.target.value = '';
     }
   };
 
@@ -96,7 +161,7 @@ export default function PhotoStudio() {
     e.stopPropagation();
     setIsDragging(false);
     if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      processImageFile(e.dataTransfer.files[0]);
+      addFiles(e.dataTransfer.files, files.length > 0);
     }
   };
 
@@ -131,12 +196,16 @@ export default function PhotoStudio() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Fungsi polling task terpusat dan aman dari unmount / reload
-  const startPolling = (taskId, initialPreviewUrl = null) => {
+  // Central Polling Function
+  const startPolling = (taskId, isBatchMode = false, initialPreviewUrl = null) => {
     if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     setIsProcessing(true);
-    localStorage.setItem('upscaler_active_photo_task', taskId);
-    if (initialPreviewUrl) setPreviewUrl(initialPreviewUrl);
+    const storageKey = isBatchMode ? 'upscaler_active_batch_task' : 'upscaler_active_photo_task';
+    localStorage.setItem(storageKey, taskId);
+
+    if (initialPreviewUrl && !isBatchMode) {
+      setPreviewUrl(initialPreviewUrl);
+    }
 
     pollTimerRef.current = setInterval(async () => {
       try {
@@ -145,21 +214,28 @@ export default function PhotoStudio() {
         const tData = await tRes.json();
         setProgress(tData.progress || 0);
         if (tData.message) setProgressMsg(tData.message);
-        if (tData.preview_url && !previewUrl) setPreviewUrl(tData.preview_url);
+
+        if (!isBatchMode && tData.preview_url && !previewUrl) {
+          setPreviewUrl(tData.preview_url);
+        }
 
         if (tData.status === 'completed') {
           if (pollTimerRef.current) clearInterval(pollTimerRef.current);
           pollTimerRef.current = null;
-          setResult(tData.result);
+          if (isBatchMode) {
+            setBatchResult(tData.result);
+          } else {
+            setSingleResult(tData.result);
+          }
           setIsProcessing(false);
           setProgress(100);
-          localStorage.removeItem('upscaler_active_photo_task');
+          localStorage.removeItem(storageKey);
         } else if (tData.status === 'failed') {
           if (pollTimerRef.current) clearInterval(pollTimerRef.current);
           pollTimerRef.current = null;
-          setError(tData.error || 'Terjadi kesalahan saat memproses foto.');
+          setError(tData.error || 'Terjadi kesalahan saat memproses gambar.');
           setIsProcessing(false);
-          localStorage.removeItem('upscaler_active_photo_task');
+          localStorage.removeItem(storageKey);
         }
       } catch (pollErr) {
         console.error('Polling error:', pollErr);
@@ -167,134 +243,125 @@ export default function PhotoStudio() {
     }, 400);
   };
 
-  // Auto-recovery: Jika halaman ter-refresh saat AI sedang bekerja, pulihkan otomatis
+  // Auto-recovery jika browser refresh saat proses berjalan
   useEffect(() => {
     const recoverTask = async () => {
-      const savedTaskId = localStorage.getItem('upscaler_active_photo_task');
-      let targetTaskId = savedTaskId;
+      const savedPhotoTask = localStorage.getItem('upscaler_active_photo_task');
+      const savedBatchTask = localStorage.getItem('upscaler_active_batch_task');
 
-      if (!targetTaskId) {
-        try {
-          const aRes = await fetch('/api/tasks/active');
-          if (aRes.ok) {
-            const aData = await aRes.json();
-            const activePhoto = (aData.tasks || []).find((t) => t.media_type === 'photo');
-            if (activePhoto) {
-              targetTaskId = activePhoto.task_id;
-            }
-          }
-        } catch (e) {
-          console.debug('Gagal cek active tasks:', e);
-        }
-      }
-
-      if (targetTaskId) {
-        try {
-          const res = await fetch(`/api/task/${targetTaskId}`);
-          if (res.ok) {
-            const data = await res.json();
-            if (data.status === 'processing') {
-              setProgress(data.progress || 0);
-              setProgressMsg(data.message || 'Melanjutkan proses upscaling AI...');
-              if (data.preview_url) setPreviewUrl(data.preview_url);
-              if (data.model) setModel(data.model);
-              if (data.scale) setScale(data.scale);
-              startPolling(targetTaskId, data.preview_url);
-            } else if (data.status === 'completed') {
-              setResult(data.result);
-              if (data.preview_url) setPreviewUrl(data.preview_url);
-              localStorage.removeItem('upscaler_active_photo_task');
-            } else {
-              localStorage.removeItem('upscaler_active_photo_task');
-            }
-          }
-        } catch (err) {
-          console.error('Gagal memulihkan task:', err);
-        }
+      if (savedPhotoTask) {
+        startPolling(savedPhotoTask, false);
+      } else if (savedBatchTask) {
+        startPolling(savedBatchTask, true);
       }
     };
-
     recoverTask();
 
     return () => {
-      if (pollTimerRef.current) {
-        clearInterval(pollTimerRef.current);
-      }
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     };
   }, []);
 
-  // Proteksi sebelum halaman ditutup / direfresh oleh user saat proses AI aktif
-  useEffect(() => {
-    const handleBeforeUnload = (e) => {
-      if (isProcessing) {
-        e.preventDefault();
-        e.returnValue = 'Proses AI sedang berjalan di latar belakang. Yakin ingin meninggalkan halaman?';
-        return e.returnValue;
-      }
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [isProcessing]);
-
+  // Submit Handler: Automatically detects Single vs Batch
   const handleEnhance = async () => {
-    if (!file && !previewUrl) return;
+    if (files.length === 0) return;
     setIsProcessing(true);
     setError(null);
     setProgress(0);
-    setProgressMsg('Menyiapkan unggahan foto...');
+    setSingleResult(null);
+    setBatchResult(null);
+    setActiveCompareItem(null);
 
-    const formData = new FormData();
-    if (file) {
-      formData.append('image', file);
-    }
-    formData.append('model', model);
-    formData.append('scale', scale);
-    if (targetRes) {
-      formData.append('target_res', targetRes);
-    }
-    formData.append('face', useFace);
-    formData.append('face_model', faceModel);
-    formData.append('face_weight', faceWeight);
-    formData.append('clarity', (clarity / 100.0).toFixed(2));
-    formData.append('tile', tile);
-    formData.append('format', format);
-    formData.append('quality', quality);
+    const isBatch = files.length > 1;
 
     try {
-      const res = await fetch('/api/enhance/photo', {
-        method: 'POST',
-        body: formData,
-      });
+      if (!isBatch) {
+        // Mode 1 Foto Tunggal
+        setProgressMsg('Menyiapkan unggahan foto...');
+        const formData = new FormData();
+        formData.append('image', files[0]);
+        formData.append('model', model);
+        formData.append('scale', scale);
+        if (targetRes) formData.append('target_res', targetRes);
+        formData.append('face', useFace);
+        formData.append('face_model', faceModel);
+        formData.append('face_weight', faceWeight);
+        formData.append('clarity', (clarity / 100.0).toFixed(2));
+        formData.append('tile', tile);
+        formData.append('format', format);
+        formData.append('quality', quality);
 
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || `Gagal memproses gambar (${res.status})`);
+        const res = await fetch('/api/enhance/photo', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || `Gagal memproses foto (${res.status})`);
+        }
+
+        const initData = await res.json();
+        if (initData.task_id) {
+          startPolling(initData.task_id, false, previewUrl);
+        }
+      } else {
+        // Mode Batch (2 atau lebih foto)
+        setProgressMsg(`Mengunggah ${files.length} foto untuk batch processing...`);
+        const formData = new FormData();
+        files.forEach((f) => formData.append('files', f));
+        formData.append('model', model);
+        formData.append('scale', scale);
+        if (targetRes) formData.append('target_res', targetRes);
+        formData.append('face', useFace);
+        formData.append('face_model', faceModel);
+        formData.append('face_weight', faceWeight);
+        formData.append('clarity', (clarity / 100.0).toFixed(2));
+        formData.append('tile', tile);
+        formData.append('format', format);
+
+        const res = await fetch('/api/enhance/batch', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || `Gagal memproses batch foto (${res.status})`);
+        }
+
+        const initData = await res.json();
+        if (initData.task_id) {
+          startPolling(initData.task_id, true);
+        }
       }
-
-      const initData = await res.json();
-      const taskId = initData.task_id;
-
-      if (!taskId) {
-        setResult(initData);
-        setIsProcessing(false);
-        return;
-      }
-
-      startPolling(taskId, previewUrl);
     } catch (err) {
       console.error(err);
       setError(err.message || 'Terjadi kesalahan saat memproses foto.');
       setIsProcessing(false);
       localStorage.removeItem('upscaler_active_photo_task');
+      localStorage.removeItem('upscaler_active_batch_task');
     }
   };
 
+  const isBatchMode = files.length > 1;
+
   return (
     <div className="studio-grid">
-      {/* Left Column: Upload & Controls */}
+      {/* Hidden input to append more photos */}
+      <input
+        ref={appendInputRef}
+        type="file"
+        multiple
+        accept="image/*"
+        style={{ display: 'none' }}
+        onChange={(e) => handleFileChange(e, true)}
+      />
+
+      {/* Kolom Kiri: Upload & Pengaturan */}
       <div className="glass-card studio-panel">
-        {/* Dropzone */}
-        {!previewUrl ? (
+        {/* Dropzone jika belum ada file */}
+        {files.length === 0 ? (
           <label
             className={`dropzone ${isDragging ? 'drag-active' : ''}`}
             onDragOver={handleDragOver}
@@ -304,36 +371,195 @@ export default function PhotoStudio() {
           >
             <input
               type="file"
+              multiple
               accept="image/*"
               style={{ display: 'none' }}
-              onChange={handleFileChange}
+              onChange={(e) => handleFileChange(e, false)}
             />
             <UploadCloud size={44} style={{ color: 'var(--accent-primary)', marginBottom: '10px' }} />
             <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '4px' }}>
-              Unggah Foto Anda
+              Unggah Foto (Tunggal / Banyak Sekaligus)
             </h3>
             <p style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>
-              Drag & drop file JPG, PNG, atau WEBP di sini
+              Drag & drop atau pilih 1 foto maupun banyak foto JPG, PNG, atau WEBP
             </p>
           </label>
+        ) : files.length === 1 ? (
+          /* Mode 1 Foto Tunggal */
+          <div>
+            <div
+              className={`dropzone-preview ${isDragging ? 'drag-active' : ''}`}
+              onDragOver={handleDragOver}
+              onDragEnter={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              style={{ position: 'relative' }}
+            >
+              <img src={previewUrl} alt="Preview input" />
+              <label className="change-overlay">
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={(e) => handleFileChange(e, false)}
+                />
+                <RefreshCw size={12} /> Ganti Foto
+              </label>
+            </div>
+
+            {/* Toolbar Info & Opsi Tambah Foto Batch */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginTop: '10px',
+                padding: '8px 12px',
+                borderRadius: '8px',
+                background: 'rgba(255, 255, 255, 0.03)',
+                border: '1px solid var(--border-subtle)',
+              }}
+            >
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                {imageMeta ? `${imageMeta.width} × ${imageMeta.height} px` : '1 Foto Terpilih'}
+              </div>
+              <button
+                type="button"
+                onClick={() => appendInputRef.current?.click()}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  background: 'rgba(99, 102, 241, 0.15)',
+                  border: '1px solid rgba(99, 102, 241, 0.3)',
+                  borderRadius: '6px',
+                  color: '#818cf8',
+                  fontSize: '0.74rem',
+                  fontWeight: 700,
+                  padding: '4px 10px',
+                  cursor: 'pointer',
+                }}
+              >
+                <Plus size={13} />
+                <span>+ Tambah Foto (Mode Batch)</span>
+              </button>
+            </div>
+          </div>
         ) : (
+          /* Mode Batch (2 atau lebih foto) */
           <div
-            className={`dropzone-preview ${isDragging ? 'drag-active' : ''}`}
-            onDragOver={handleDragOver}
-            onDragEnter={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
+            style={{
+              padding: '14px',
+              borderRadius: '12px',
+              background: 'rgba(15, 23, 42, 0.7)',
+              border: '1px solid var(--border-subtle)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '10px',
+            }}
           >
-            <img src={previewUrl} alt="Preview input" />
-            <label className="change-overlay">
-              <input
-                type="file"
-                accept="image/*"
-                style={{ display: 'none' }}
-                onChange={handleFileChange}
-              />
-              <RefreshCw size={12} /> Ganti Foto
-            </label>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Layers size={16} style={{ color: 'var(--accent-primary)' }} />
+                <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#fff' }}>
+                  Antrean Batch: {files.length} Foto
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={clearAllFiles}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-dim)',
+                  fontSize: '0.72rem',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '3px',
+                }}
+              >
+                <Trash2 size={12} /> Hapus Semua
+              </button>
+            </div>
+
+            {/* Strip Thumbnail Foto */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(70px, 1fr))',
+                gap: '8px',
+                maxHeight: '160px',
+                overflowY: 'auto',
+                padding: '4px',
+              }}
+            >
+              {files.map((f, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    position: 'relative',
+                    aspectRatio: '1',
+                    borderRadius: '6px',
+                    overflow: 'hidden',
+                    border: '1px solid var(--border-subtle)',
+                    background: '#000',
+                  }}
+                  title={f.name}
+                >
+                  <img
+                    src={URL.createObjectURL(f)}
+                    alt={f.name}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeFileAtIndex(idx)}
+                    style={{
+                      position: 'absolute',
+                      top: '2px',
+                      right: '2px',
+                      background: 'rgba(0,0,0,0.7)',
+                      border: 'none',
+                      borderRadius: '50%',
+                      width: '18px',
+                      height: '18px',
+                      color: '#fff',
+                      fontSize: '10px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => appendInputRef.current?.click()}
+              style={{
+                width: '100%',
+                padding: '8px',
+                borderRadius: '6px',
+                background: 'rgba(255, 255, 255, 0.04)',
+                border: '1px dashed var(--border-subtle)',
+                color: 'var(--text-muted)',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+              }}
+            >
+              <Plus size={14} /> + Tambah Foto Lainnya
+            </button>
           </div>
         )}
 
@@ -444,48 +670,14 @@ export default function PhotoStudio() {
               ))}
             </div>
           </div>
-
-          {/* Live Resolution Estimate Pill */}
-          <div style={{
-            marginTop: '8px',
-            padding: '7px 10px',
-            borderRadius: '6px',
-            background: 'rgba(99, 102, 241, 0.08)',
-            border: '1px solid rgba(99, 102, 241, 0.22)',
-            fontSize: '0.74rem',
-            color: 'var(--text-muted)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-          }}>
-            <span>📐 Estimasi Dimensi Hasil:</span>
-            <span style={{ fontWeight: 700, color: '#fff' }}>
-              {imageMeta?.width && imageMeta?.height ? (
-                targetRes ? (() => {
-                  const resMap = { '1080p': 1080, '1440p': 1440, '4k': 2160, '8k': 4320 };
-                  const base = resMap[targetRes] || 1080;
-                  const w = imageMeta.width;
-                  const h = imageMeta.height;
-                  const tw = w >= h ? Math.round(w * (base / h)) : base;
-                  const th = w >= h ? base : Math.round(h * (base / w));
-                  const rat = (tw / w).toFixed(2);
-                  return `${tw} × ${th} (${targetRes.toUpperCase()} · ~${rat}x)`;
-                })() : (
-                  `${Math.round(imageMeta.width * scale)} × ${Math.round(imageMeta.height * scale)} (${scale === 1 ? '1x Tetap' : `${scale}x`})`
-                )
-              ) : (
-                targetRes ? `Preset ${targetRes.toUpperCase()} (Aspek Rasio Terjaga)` : `${scale}x Perbesaran`
-              )}
-            </span>
-          </div>
         </div>
 
-        {/* Face Restoration Toggle & Engine */}
+        {/* Restorasi Wajah (Face Restoration) */}
         <div className="control-group">
           <div className="switch-row">
             <div className="switch-label">
               <span className="switch-title">✨ Restorasi Wajah AI</span>
-              <span className="switch-desc">Pertajam mata, kulit, dan helai rambut</span>
+              <span className="switch-desc">Deteksi dan pertajam mata, bibir, serta kulit potret</span>
             </div>
             <input
               type="checkbox"
@@ -496,29 +688,18 @@ export default function PhotoStudio() {
           </div>
 
           {useFace && (
-            <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <div style={{ display: 'flex', gap: '6px' }}>
+            <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div className="scale-buttons" style={{ gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px' }}>
                 {[
-                  { id: 'codeformer', label: 'CodeFormer (Tajam)', desc: 'Natural & detail' },
-                  { id: 'gfpgan', label: 'GFPGAN v1.4', desc: 'Smooth aesthetic' },
-                  { id: 'restoreformer', label: 'RestoreFormer', desc: 'Transformer' },
+                  { id: 'codeformer', label: '🎯 CodeFormer (Detail Tajam)' },
+                  { id: 'gfpgan', label: '🌸 GFPGAN v1.4 (Natural)' },
                 ].map((fm) => (
                   <button
                     key={fm.id}
                     type="button"
+                    className={`scale-btn ${faceModel === fm.id ? 'active' : ''}`}
                     onClick={() => setFaceModel(fm.id)}
-                    style={{
-                      flex: 1,
-                      padding: '6px 4px',
-                      borderRadius: '6px',
-                      border: faceModel === fm.id ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
-                      background: faceModel === fm.id ? 'rgba(99, 102, 241, 0.25)' : 'rgba(255,255,255,0.03)',
-                      color: faceModel === fm.id ? '#fff' : 'var(--text-dim)',
-                      fontSize: '0.72rem',
-                      fontWeight: faceModel === fm.id ? 700 : 500,
-                      cursor: 'pointer',
-                      textAlign: 'center',
-                    }}
+                    style={{ padding: '8px 6px', fontSize: '0.78rem', textAlign: 'center' }}
                   >
                     <div>{fm.label}</div>
                   </button>
@@ -539,12 +720,15 @@ export default function PhotoStudio() {
                   onChange={(e) => setFaceWeight(parseFloat(e.target.value))}
                   className="custom-range"
                 />
+                <div style={{ fontSize: '0.71rem', color: 'var(--text-dim)', marginTop: '4px' }}>
+                  💡 Rekomendasi bobot <strong>0.3 – 0.5</strong> agar tekstur wajah menyatu natural dengan foto asli tanpa efek plastik.
+                </div>
               </div>
             </div>
           )}
         </div>
 
-        {/* Clarity & Micro-Contrast Post-Processing */}
+        {/* Clarity Slider */}
         <div className="control-group">
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -566,7 +750,7 @@ export default function PhotoStudio() {
           />
         </div>
 
-        {/* Advanced Accordion */}
+        {/* Opsi Lanjutan (Format & Tile) */}
         <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
           <button
             type="button"
@@ -603,35 +787,19 @@ export default function PhotoStudio() {
                         flex: 1,
                         padding: '6px',
                         borderRadius: '6px',
-                        border: '1px solid var(--border-subtle)',
-                        background: format === f ? 'rgba(99, 102, 241, 0.2)' : 'transparent',
-                        color: format === f ? '#fff' : 'var(--text-dim)',
-                        textTransform: 'uppercase',
-                        fontWeight: 700,
-                        fontSize: '0.75rem',
+                        border: format === f ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                        background: format === f ? 'var(--accent-gradient)' : 'rgba(255, 255, 255, 0.05)',
+                        color: '#fff',
+                        fontSize: '0.78rem',
+                        fontWeight: 600,
                         cursor: 'pointer',
+                        textTransform: 'uppercase',
                       }}
                     >
                       {f}
                     </button>
                   ))}
                 </div>
-              </div>
-
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
-                  <span>Tile Size (0 = Otomatis)</span>
-                  <span style={{ fontWeight: 700, color: '#fff' }}>{tile}</span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="800"
-                  step="64"
-                  value={tile}
-                  onChange={(e) => setTile(parseInt(e.target.value))}
-                  className="custom-range"
-                />
               </div>
             </div>
           )}
@@ -641,18 +809,24 @@ export default function PhotoStudio() {
         <button
           type="button"
           className="btn-primary-enhance"
-          disabled={!file || isProcessing}
+          disabled={files.length === 0 || isProcessing}
           onClick={handleEnhance}
         >
           {isProcessing ? (
             <>
               <RefreshCw size={20} className="spinning" />
-              <span>Memproses dengan AI ({progress}%)...</span>
+              <span>Memproses {files.length > 1 ? `${files.length} Foto` : 'Foto'} ({progress}%)...</span>
             </>
           ) : (
             <>
               <Sparkles size={20} />
-              <span>Tingkatkan Kualitas Foto</span>
+              <span>
+                {files.length === 0
+                  ? 'Pilih Foto Terlebih Dahulu'
+                  : files.length === 1
+                  ? 'Tingkatkan Kualitas Foto'
+                  : `Tingkatkan Kualitas ${files.length} Foto (Batch)`}
+              </span>
             </>
           )}
         </button>
@@ -671,7 +845,7 @@ export default function PhotoStudio() {
               <div className="progress-fill" style={{ width: `${progress}%` }} />
             </div>
             <div className="progress-footer">
-              <span>Model: {model} ({scale}x)</span>
+              <span>{isBatchMode ? `${files.length} file batch` : `Model: ${model} (${scale}x)`}</span>
               <span>{progress}% selesai</span>
             </div>
           </div>
@@ -685,47 +859,223 @@ export default function PhotoStudio() {
         )}
       </div>
 
-      {/* Right Column: Preview & Slider */}
+      {/* Kolom Kanan: Pratinjau / Slider / Galeri Batch */}
       <div className="glass-card studio-panel" style={{ justifyContent: 'center' }}>
-        {result ? (
+        {/* KASUS A: Hasil Batch Processing */}
+        {batchResult ? (
+          activeCompareItem ? (
+            /* Mode Periksa Slider dari salah satu item batch */
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <button
+                  type="button"
+                  onClick={() => setActiveCompareItem(null)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    background: 'rgba(255,255,255,0.06)',
+                    border: '1px solid var(--border-subtle)',
+                    color: '#fff',
+                    fontSize: '0.78rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <ArrowLeft size={14} /> Kembali ke Galeri Batch
+                </button>
+                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)' }}>
+                  {activeCompareItem.name}
+                </span>
+              </div>
+
+              <ImageComparisonSlider
+                originalUrl={activeCompareItem.url}
+                enhancedUrl={activeCompareItem.url}
+              />
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <a
+                  href={activeCompareItem.url}
+                  download={activeCompareItem.name}
+                  className="btn-action-download"
+                  style={{ flex: 1 }}
+                >
+                  <Download size={15} /> Unduh Foto Ini
+                </a>
+                <button
+                  type="button"
+                  className="btn-action-secondary"
+                  onClick={() => handleOpenFile(activeCompareItem.absolute_path, activeCompareItem.name)}
+                >
+                  <ExternalLink size={15} /> Buka File
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* Galeri Ringkasan Hasil Batch */
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#34d399', fontWeight: 700 }}>
+                <CheckCircle size={20} />
+                <span>Selesai! {batchResult.success_count} dari {batchResult.total} foto berhasil diproses ({batchResult.elapsed}s)</span>
+              </div>
+
+              {/* Action Buttons: Unduh ZIP & Buka Folder */}
+              <div className="result-actions-wrapper">
+                <div className="action-buttons-row">
+                  <a
+                    href={batchResult.zip_url}
+                    download="batch_enhanced.zip"
+                    className="btn-action-primary"
+                    style={{ textDecoration: 'none' }}
+                  >
+                    <Download size={18} />
+                    <span>Unduh Seluruh Foto (.ZIP)</span>
+                  </a>
+
+                  {batchResult.folder_path && (
+                    <button
+                      type="button"
+                      className="btn-action-secondary"
+                      onClick={() => handleOpenFolder(batchResult.folder_path)}
+                    >
+                      <FolderOpen size={16} />
+                      <span>Buka di Folder Explorer</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Grid Galeri Hasil Batch */}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+                  gap: '12px',
+                  maxHeight: '520px',
+                  overflowY: 'auto',
+                  padding: '4px',
+                }}
+              >
+                {batchResult.items.map((item, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      position: 'relative',
+                      borderRadius: '8px',
+                      overflow: 'hidden',
+                      background: '#000',
+                      border: '1px solid var(--border-subtle)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                    }}
+                  >
+                    <div style={{ position: 'relative', aspectRatio: '1', overflow: 'hidden' }}>
+                      <img
+                        src={item.url}
+                        alt={item.name}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                    </div>
+                    <div style={{ padding: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <div
+                        style={{
+                          fontSize: '0.74rem',
+                          fontWeight: 600,
+                          color: '#fff',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                        }}
+                        title={item.name}
+                      >
+                        {item.name}
+                      </div>
+                      <div style={{ display: 'flex', gap: '4px' }}>
+                        <a
+                          href={item.url}
+                          download={item.name}
+                          style={{
+                            flex: 1,
+                            padding: '4px',
+                            background: 'rgba(255,255,255,0.06)',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: '4px',
+                            color: '#fff',
+                            fontSize: '0.7rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '4px',
+                            textDecoration: 'none',
+                          }}
+                        >
+                          <Download size={11} /> Unduh
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenFile(item.absolute_path, item.name)}
+                          style={{
+                            padding: '4px 6px',
+                            background: 'rgba(255,255,255,0.06)',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: '4px',
+                            color: '#fff',
+                            fontSize: '0.7rem',
+                            cursor: 'pointer',
+                          }}
+                          title="Buka file langsung"
+                        >
+                          <ExternalLink size={11} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        ) : singleResult ? (
+          /* KASUS B: Hasil 1 Foto Tunggal (Interactive Slider) */
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <ImageComparisonSlider
-              originalUrl={result.original_url}
-              enhancedUrl={result.enhanced_url}
+              originalUrl={singleResult.original_url}
+              enhancedUrl={singleResult.enhanced_url}
             />
 
             {/* Stat Cards */}
             <div className="stat-cards-grid">
               <div className="stat-item">
                 <div className="label">Resolusi Asli</div>
-                <div className="val">{result.orig_w}x{result.orig_h}</div>
+                <div className="val">{singleResult.orig_w}x{singleResult.orig_h}</div>
               </div>
               <div className="stat-item highlight">
-                <div className="label">Hasil AI ({result.scale}x)</div>
-                <div className="val">{result.new_w}x{result.new_h}</div>
+                <div className="label">Hasil AI ({singleResult.scale}x)</div>
+                <div className="val">{singleResult.new_w}x{singleResult.new_h}</div>
               </div>
               <div className="stat-item success">
                 <div className="label">Waktu</div>
-                <div className="val">{result.elapsed}s</div>
+                <div className="val">{singleResult.elapsed}s</div>
               </div>
               <div className="stat-item">
                 <div className="label">Ukuran</div>
-                <div className="val">{result.size_formatted}</div>
+                <div className="val">{singleResult.size_formatted}</div>
               </div>
             </div>
 
-            {/* Result Actions: Path Info & Action Buttons */}
+            {/* Action Buttons */}
             <div className="result-actions-wrapper">
-              {result.absolute_path && (
+              {singleResult.absolute_path && (
                 <div className="path-display-card">
-                  <div className="path-text" title={result.absolute_path}>
+                  <div className="path-text" title={singleResult.absolute_path}>
                     <Folder size={15} style={{ flexShrink: 0, color: 'var(--accent-primary)' }} />
-                    <span>{result.absolute_path}</span>
+                    <span>{singleResult.absolute_path}</span>
                   </div>
                   <button
                     type="button"
                     className="btn-copy-path"
-                    onClick={() => copyPath(result.absolute_path)}
+                    onClick={() => copyPath(singleResult.absolute_path)}
                     title="Salin path file ke clipboard"
                   >
                     {copied ? <Check size={13} style={{ color: '#34d399' }} /> : <Copy size={13} />}
@@ -738,8 +1088,7 @@ export default function PhotoStudio() {
                 <button
                   type="button"
                   className="btn-action-primary"
-                  onClick={() => handleOpenFolder(result.absolute_path, result.filename)}
-                  title="Buka File Explorer dan sorot file ini"
+                  onClick={() => handleOpenFolder(singleResult.absolute_path, singleResult.filename)}
                 >
                   <FolderOpen size={18} />
                   <span>Buka di Folder</span>
@@ -748,18 +1097,16 @@ export default function PhotoStudio() {
                 <button
                   type="button"
                   className="btn-action-secondary"
-                  onClick={() => handleOpenFile(result.absolute_path, result.filename)}
-                  title="Buka file dengan aplikasi default OS"
+                  onClick={() => handleOpenFile(singleResult.absolute_path, singleResult.filename)}
                 >
                   <ExternalLink size={16} />
                   <span>Buka File</span>
                 </button>
 
                 <a
-                  href={result.enhanced_url}
-                  download={result.filename}
+                  href={singleResult.enhanced_url}
+                  download={singleResult.filename}
                   className="btn-action-download"
-                  title="Unduh file melalui browser"
                 >
                   <Download size={15} />
                   <span>Unduh File</span>
@@ -767,7 +1114,19 @@ export default function PhotoStudio() {
               </div>
             </div>
           </div>
+        ) : files.length > 1 ? (
+          /* Pratinjau Siap Proses Batch */
+          <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-dim)' }}>
+            <Layers size={48} style={{ color: 'var(--accent-primary)', marginBottom: '14px' }} />
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff', marginBottom: '6px' }}>
+              {files.length} Foto Siap Ditingkatkan
+            </h3>
+            <p style={{ fontSize: '0.85rem', maxWidth: '360px', margin: '0 auto' }}>
+              Klik tombol <strong>"Tingkatkan Kualitas {files.length} Foto (Batch)"</strong> di sisi kiri untuk memproses seluruh antrean sekaligus.
+            </p>
+          </div>
         ) : previewUrl ? (
+          /* Pratinjau Siap Proses 1 Foto */
           <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-dim)' }}>
             <img
               src={previewUrl}
@@ -779,13 +1138,14 @@ export default function PhotoStudio() {
             </p>
           </div>
         ) : (
+          /* Belum Ada File */
           <div style={{ textAlign: 'center', padding: '80px 20px', color: 'var(--text-dim)' }}>
             <Sparkles size={48} style={{ color: 'rgba(255,255,255,0.1)', marginBottom: '16px' }} />
             <h3 style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>
               Pratinjau Studio
             </h3>
             <p style={{ fontSize: '0.85rem' }}>
-              Unggah foto di sebelah kiri untuk melihat slider perbandingan Before & After.
+              Unggah 1 foto atau pilih banyak foto sekaligus di sebelah kiri.
             </p>
           </div>
         )}

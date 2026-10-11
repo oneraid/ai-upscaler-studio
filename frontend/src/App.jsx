@@ -1,12 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import Navbar from './components/Navbar';
+import Sidebar from './components/Sidebar';
+import TopHeader from './components/TopHeader';
 import PhotoStudio from './components/PhotoStudio';
 import VideoStudio from './components/VideoStudio';
-import BatchStudio from './components/BatchStudio';
-import { Image, Video, Layers } from 'lucide-react';
+import CropStudio from './components/CropStudio';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('photo'); // 'photo' | 'video' | 'batch'
+  const [activeTab, setActiveTab] = useState('photo'); // 'photo' | 'video' | 'crop'
+  const [videoForUpscale, setVideoForUpscale] = useState(null);
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  const handleSendToUpscaler = (videoData) => {
+    setVideoForUpscale(videoData);
+    setActiveTab('video');
+  };
 
   useEffect(() => {
     const preventDefaults = (e) => {
@@ -21,57 +28,43 @@ export default function App() {
   }, []);
 
   return (
-    <div className="app-container">
-      {/* Top Navbar */}
-      <Navbar />
+    <div className="app-layout">
+      {/* Modern Collapsible & Extensible Sidebar */}
+      <Sidebar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        mobileOpen={mobileOpen}
+        setMobileOpen={setMobileOpen}
+      />
 
-      {/* Main Tabs Navigation */}
-      <nav className="tabs-nav">
-        <button
-          type="button"
-          className={`tab-btn ${activeTab === 'photo' ? 'active' : ''}`}
-          onClick={() => setActiveTab('photo')}
-        >
-          <Image size={18} />
-          <span>Foto Studio</span>
-        </button>
+      {/* Main Content Area */}
+      <div className="main-content-wrapper">
+        <TopHeader
+          activeTab={activeTab}
+          onToggleMobile={() => setMobileOpen(!mobileOpen)}
+        />
 
-        <button
-          type="button"
-          className={`tab-btn ${activeTab === 'video' ? 'active' : ''}`}
-          onClick={() => setActiveTab('video')}
-        >
-          <Video size={18} />
-          <span>Video Upscale</span>
-        </button>
+        {/* Tab Panels: dijaga tetap ter-mount agar proses di background tidak hilang saat ganti tab */}
+        <main className="main-content-panels">
+          <div style={{ display: activeTab === 'photo' ? 'block' : 'none' }}>
+            <PhotoStudio />
+          </div>
+          <div style={{ display: activeTab === 'video' ? 'block' : 'none' }}>
+            <VideoStudio
+              externalVideo={videoForUpscale}
+              onClearExternalVideo={() => setVideoForUpscale(null)}
+            />
+          </div>
+          <div style={{ display: activeTab === 'crop' ? 'block' : 'none' }}>
+            <CropStudio onSendToUpscaler={handleSendToUpscaler} />
+          </div>
+        </main>
 
-        <button
-          type="button"
-          className={`tab-btn ${activeTab === 'batch' ? 'active' : ''}`}
-          onClick={() => setActiveTab('batch')}
-        >
-          <Layers size={18} />
-          <span>Batch Processing</span>
-        </button>
-      </nav>
-
-      {/* Tab Panels: dijaga tetap ter-mount agar proses upscaling di background tidak hilang saat ganti tab */}
-      <main>
-        <div style={{ display: activeTab === 'photo' ? 'block' : 'none' }}>
-          <PhotoStudio />
-        </div>
-        <div style={{ display: activeTab === 'video' ? 'block' : 'none' }}>
-          <VideoStudio />
-        </div>
-        <div style={{ display: activeTab === 'batch' ? 'block' : 'none' }}>
-          <BatchStudio />
-        </div>
-      </main>
-
-      {/* Minimal Footer */}
-      <footer style={{ textAlign: 'center', marginTop: '48px', color: 'var(--text-dim)', fontSize: '0.8rem' }}>
-        AI Upscaler Studio &bull; Real-ESRGAN &bull; GFPGAN &bull; NVIDIA NVENC &bull; React + Vite + FastAPI
-      </footer>
+        {/* Minimal Footer */}
+        <footer className="app-footer">
+          AI Upscaler Studio &bull; Real-ESRGAN &bull; GFPGAN &bull; NVIDIA NVENC &bull; React 19 + Vite + FastAPI
+        </footer>
+      </div>
     </div>
   );
 }

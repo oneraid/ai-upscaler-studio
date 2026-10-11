@@ -34,7 +34,7 @@ const getResLabel = (w, h) => {
   return 'SD';
 };
 
-export default function VideoStudio() {
+export default function VideoStudio({ externalVideo, onClearExternalVideo } = {}) {
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [videoMeta, setVideoMeta] = useState(null);
@@ -46,7 +46,7 @@ export default function VideoStudio() {
   const [targetFps, setTargetFps] = useState(0);
   const [useFace, setUseFace] = useState(false);
   const [faceModel, setFaceModel] = useState('codeformer');
-  const [faceWeight, setFaceWeight] = useState(0.5);
+  const [faceWeight, setFaceWeight] = useState(0.45);
   const [isTrim, setIsTrim] = useState(false);
   const [startSec, setStartSec] = useState(0);
   const [endSec, setEndSec] = useState(5);
@@ -60,6 +60,38 @@ export default function VideoStudio() {
 
   const [isDragging, setIsDragging] = useState(false);
   const pollTimerRef = useRef(null);
+
+  // Auto-load external video if passed from CropStudio
+  useEffect(() => {
+    if (externalVideo) {
+      if (externalVideo.file) {
+        processVideoFile(externalVideo.file);
+      } else if (externalVideo.video_url || externalVideo.url) {
+        const url = externalVideo.video_url || externalVideo.url;
+        setPreviewUrl(url);
+        setResult(null);
+        setError(null);
+        setVideoMeta({
+          name: externalVideo.filename || 'video_cropped.mp4',
+          size: externalVideo.size_formatted || '-',
+          width: externalVideo.new_w || null,
+          height: externalVideo.new_h || null,
+          duration: externalVideo.new_duration || null,
+          durationFormatted: formatDuration(externalVideo.new_duration),
+        });
+        fetch(url)
+          .then((r) => r.blob())
+          .then((blob) => {
+            const f = new File([blob], externalVideo.filename || 'video_cropped.mp4', {
+              type: 'video/mp4',
+            });
+            setFile(f);
+          })
+          .catch((err) => console.warn('Could not fetch blob for external video:', err));
+      }
+      if (onClearExternalVideo) onClearExternalVideo();
+    }
+  }, [externalVideo]);
 
   const isValidVideo = (f) => {
     if (!f) return false;
@@ -690,10 +722,15 @@ export default function VideoStudio() {
                 />
               </div>
 
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
-                {faceModel === 'codeformer'
-                  ? '🎯 CodeFormer: Restorasi detail mata, rambut, dan tekstur wajah sangat tajam.'
-                  : '🌸 GFPGAN v1.4: Restorasi wajah natural dan mulus antar frame video.'}
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                <div>
+                  {faceModel === 'codeformer'
+                    ? '🎯 CodeFormer: Restorasi detail mata, rambut, dan tekstur wajah sangat tajam.'
+                    : '🌸 GFPGAN v1.4: Restorasi wajah natural dan mulus antar frame video.'}
+                </div>
+                <div style={{ color: '#93c5fd' }}>
+                  💡 Bobot <strong>0.3 – 0.5</strong> sangat disarankan agar wajah menyatu natural antar frame tanpa efek plastik.
+                </div>
               </div>
             </div>
           )}
